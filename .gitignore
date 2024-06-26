@@ -1,0 +1,14 @@
+# Ignore everything
+*
+
+# But not these files...
+!*.m
+
+# ...and not this folder...
+!utils/
+
+# ...and not anything in that folder
+!utils/**
+
+# Ensure .gitignore itself is not ignored
+!.gitignore
