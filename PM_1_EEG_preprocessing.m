@@ -1,4 +1,4 @@
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % EEGLAB 2024.0 | MATLAB R2024a
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % The paper specifies  referencing to the right mastoid
@@ -40,6 +40,10 @@ EEG = pop_chanedit(EEG, 'lookup', fullfile(pathToEEGLAB, 'channel_location_files
 eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Not clean EEG data');
 disp('Data visulised');
 
+%%
+% Reclassify events
+EEG = reclassify_events(EEG);
+
 %% 
 
 % Bandpass filter 0.01 - 100 Hz 
@@ -79,11 +83,25 @@ EEG = pop_interp(EEG, EEG.chanlocs);
 %EEG = pop_interp(EEG, EEG.chanlocs, 'spherical');
 disp('Interpolation of channels complete');
 
-% Visualise the cleaned EEG data using EEGLAB GUI
-%eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Prepreprocessed EEG Data After Artifact Rejection');
+
+%%
+%{
+%% JUST FOR TESTING
+
+% Find the first occurrence of 's88' and change it to 's89'
+for i = 1:length(EEG.event)
+    if strcmp(EEG.event(i).type, 's88')
+        EEG.event(i).type = 's89';
+        break;
+    end
+end
+
+%%
+%}
 
 %%
 
+%{
 %%%%%%%%% JUST TO CHECK IF REMOVE INCoorrect FUNCTION WORKS
 % save event data to a csv file for inspection
 % Check if EEG.event is not empty
@@ -103,7 +121,7 @@ if ~isempty(EEG.event)
     end
     
     % Define your output CSV file name
-    outputCSVFileName = 'EBFORE_EEGEvents.csv';
+    outputCSVFileName = 'Before_incorrect_EEGEvents.csv';
     
     % Write the table to a CSV file
     writetable(eventsTable, outputCSVFileName);
@@ -113,7 +131,7 @@ else
     disp('No events found in the EEG structure.');
 end
 %%%%%%%%%%%%%%%%
-
+%}
 
 %%
 
@@ -139,8 +157,9 @@ endEvent = {'s99'}; % End
 EEG = removeIncorrectTrials(EEG, fixationCrossEvent, correctAnswerEvent, wrongAnswerEvent);
 disp('Incorrect trails removed');
 
-%%
 
+%%
+%{
 % save event data to a csv file for inspection
 % Check if EEG.event is not empty
 if ~isempty(EEG.event)
@@ -159,7 +178,7 @@ if ~isempty(EEG.event)
     end
     
     % Define your output CSV file name
-    outputCSVFileName = 'EEGEvents.csv';
+    outputCSVFileName = 'After_incorrect_EEGEvents.csv';
     
     % Write the table to a CSV file
     writetable(eventsTable, outputCSVFileName);
@@ -168,7 +187,7 @@ if ~isempty(EEG.event)
 else
     disp('No events found in the EEG structure.');
 end
-
+%}
 
 %%
 
@@ -205,7 +224,9 @@ disp('Remove flagged components');
 % Print the unique event types
 %disp('Unique event types:');
 %disp(uniqueEventTypes);
-
+%%
+% Visualise the cleaned EEG data using EEGLAB GUI
+eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Prepreprocessed EEG Data After Artifact Rejection');
 
 %%
 
