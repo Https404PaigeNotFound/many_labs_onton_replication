@@ -5,7 +5,7 @@
 % Could use EEGLAB's newtimef instead of the spectrogram function - will
 % run slower.
 %%
-function EEG = calculate_ersps(EEG, EEG_fixation, baseline_window, ersp_window, ersp_step, num_bootstraps, visualize)
+function EEG = calculate_ersps(EEG, EEG_fixation, baseline_window, ersp_window, ersp_step, num_bootstraps, visualise)
     % Function to calculate ERSPs for each component and assess statistical significance
     % Inputs:
     %   EEG - EEGLAB EEG structure with ICA activations
@@ -14,7 +14,7 @@ function EEG = calculate_ersps(EEG, EEG_fixation, baseline_window, ersp_window, 
     %   ersp_window - window length for the FFT (in samples)
     %   ersp_step - step size for the moving window (in samples)
     %   num_bootstraps - number of bootstrap resamples for significance testing
-    %   visualize - boolean flag to indicate whether to visualize the results
+    %   visualise - boolean flag to indicate whether to visualise the results
     % Outputs:
     %   EEG - EEGLAB EEG structure with added fields for ERSPs and significance
 
@@ -119,8 +119,8 @@ function EEG = calculate_ersps(EEG, EEG_fixation, baseline_window, ersp_window, 
     EEG.times = ERSP_times;
     EEG.freqs = ERSP_freqs;
 
-    % Visualization
-    if visualize
+    % Visualisation
+    if visualise
         figure;
         for comp = 1:num_components
             subplot(num_components, 1, comp);
