@@ -2,6 +2,17 @@
 % EEGLAB 2024.0 | MATLAB R2024a
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+%{
+ERSP Calculation and Baseline Normalisation
+Action: Transform each single-trial component activity time series to a baseline-normalised spectrographic image using a moving-window average of FFT spectra. Subtract the trial-mean log baseline power from log power at each frequency and latency for each component and trial.
+Purpose: To visualise event-related changes in spectral power.
+Figures: Fig. 2 shows memory load-related differences in theta power distribution. Fig. 3 shows the strongest time/frequency templates and their mean trial ERSPs. Fig. 6 shows grand mean spectral power changes for the fmθ cluster.
+Results Section:
+Single-trial variability.
+Single-trial ERSP decomposition.
+Mean spectral power change.
+%}
 %%
 
 % Set variables
@@ -33,7 +44,7 @@ ersp_step = 128; % Step size in samples (50% overlap). Source material does not 
 num_bootstraps = 1000;
 
 % Flag to indicate whether to visualize the results
-visualize = true;
+visualise = true;
 
 % Get list of files for each condition
 file_lists = cell(length(epoch_conditions), 1);
@@ -49,7 +60,7 @@ unique_participants = unique(cellfun(@(x) regexp(x, '^(pilot_Manylabs_\d{4}-\d{2
 for p = 1:length(unique_participants)
     participant_id = unique_participants{p};
     
-    % Initialize a structure to store the loaded EEG datasets
+    % Initialise a structure to store the loaded EEG datasets
     EEG_data = struct();
     
     % Load the fixation baseline for the participant
@@ -73,7 +84,7 @@ for p = 1:length(unique_participants)
         EEG = EEG_data.(condition);
         EEG_fixation = compute_ica_activations(EEG_fixation); % Compute independent component activations with custom function
         EEG = compute_ica_activations(EEG); % Compute independent component activations with custom function
-        EEG = calculate_ersps(EEG, EEG_fixation, baseline_window, ersp_window, ersp_step, num_bootstraps, visualize);
+        EEG = calculate_ersps(EEG, EEG_fixation, baseline_window, ersp_window, ersp_step, num_bootstraps, visualise);
         
         % Define the save directory explicitly
         switch condition
