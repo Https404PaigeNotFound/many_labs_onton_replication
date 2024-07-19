@@ -2,6 +2,14 @@
 % EEGLAB 2024.0 | MATLAB R2024a
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%{
+Component Power Spectra
+Power Spectrum Calculation
+Action: Calculate power spectra for each task epoch by averaging FFT spectra computed using data window lengths of 256 points.
+Purpose: To analyse the frequency components of brain activity during different task conditions.
+Figure:  Fig. 1C shows power spectra of individual components in the fmθ cluster. Fig. 1D shows power spectra at the Fz electrode.
+Results Section: Frontal midline theta cluster.
+%}
 
 %%
 
@@ -31,7 +39,7 @@ Probe_epoch_files = dir(fullfile(probe_epoch_filepath, '*.set'));
 Probe_epoch_fileNames = {Probe_epoch_files.name}; % Extract the names of the files
 disp(Probe_epoch_fileNames); % Display the list of .set files
 
-% Initialize arrays to hold the spectra for all subjects
+% Initialise arrays to hold the spectra for all subjects
 all_probe_spectra = [];
 all_subject_ids = [];
 
@@ -62,7 +70,7 @@ for subj = 1:length(Probe_epoch_fileNames)
     log_probe_spectra = 10 * log10(probe_spectra);
     disp('power to log power converted ')
     
-    % Normalize the spectra by subtracting mean log power from single-trial log power
+    % Normalise the spectra by subtracting mean log power from single-trial log power
     mean_log_probe_spectra = mean(log_probe_spectra, 2); % Calculate mean log power across trials for each component and frequency
     probe_spectra_norm = log_probe_spectra - mean_log_probe_spectra; % Subtract mean log power
     disp('spectra normalised')
@@ -83,7 +91,7 @@ end
 % Check if only one subject is present
 if length(Probe_epoch_fileNames) == 1
     disp('Only one subject data file loaded. Skipping ANOVA.');
-    % Visualize the component power spectra for the single subject
+    % Visualise the component power spectra for the single subject
     numComponents = size(probe_spectra_norm, 1);
     figure;
     for comp = 1:numComponents
@@ -91,10 +99,10 @@ if length(Probe_epoch_fileNames) == 1
         plot(probe_freqs_norm, squeeze(mean(probe_spectra_norm(comp, :, :), 3))); % Plot average across trials
         title(['IC ' num2str(comp)]);
         xlabel('Frequency (Hz)');
-        ylabel('Normalized Power (dB)');
+        ylabel('Normalised Power (dB)');
         xlim([2 30]); % Limit the x-axis to 2-30 Hz
     end
-    sgtitle('Normalized Independent Component Power Spectra (Probe Epoch)');
+    sgtitle('Normalised Independent Component Power Spectra (Probe Epoch)');
 else
     disp('Let us do stats!')
     % Perform statistical analysis to compare the spectra between subjects
@@ -105,14 +113,14 @@ else
     freq_range = 2:30; % 2-30 Hz
     numComponents = size(all_probe_spectra_flat, 1);
 
-    % Initialize arrays to hold ANOVA results
+    % Initialise arrays to hold ANOVA results
     anova_results = cell(numComponents, 1);
 
     % Perform ANOVA for each component across the frequency range
     for comp = 1:numComponents
         data = squeeze(all_probe_spectra_flat(comp, :, :)); % Data for the current component
         data = data'; % Transpose to have frequencies in columns and subjects in rows
-        p_values = zeros(size(data, 2), 1); % Initialize p-values array
+        p_values = zeros(size(data, 2), 1); % Initialise p-values array
 
         for freq = 1:size(data, 2)
             % Perform one-way ANOVA for the current frequency across subjects
@@ -123,7 +131,7 @@ else
         anova_results{comp} = p_values;
     end
 
-    % Visualize the ANOVA results
+    % Visualise the ANOVA results
     figure;
     for comp = 1:numComponents
         subplot(ceil(sqrt(numComponents)), ceil(sqrt(numComponents)), comp);
