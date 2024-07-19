@@ -4,7 +4,27 @@
 % The paper specifies  referencing to the right mastoid
 % and bandpass filter 0.01 - 100 Hz *online* at data acquistion
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
+%{
+Preprocessing
+Action: Digitally filter data to remove frequencies above 50 Hz. Separate data into non-overlapping epochs time-locked to each Memorise, Ignore, and Probe letter onset. Remove epochs with high-amplitude, high-frequency artifacts.
+Purpose: To clean the data by removing artifacts, ensuring only relevant brain activity is analysed.
+ICA Decomposition
+Action: Apply extended infomax ICA to the preprocessed EEG data to separate the data into independent components.
+Purpose: To isolate independent brain activity components from mixed EEG signals.
+Figure: Results will produce equivalent dipole locations for the frontal components similar to Fig. 1B.
+Results Section: Frontal midline theta cluster.
+Component Selection
+Component Categorisation and Dipole Modeling
+Action: Assess and categorise components as brain activity or non-brain artifact by visual inspection of their scalp topographies, time courses, and activation spectra. Compute equivalent current dipole models for each brain activity component map using a four-shell spherical head model in the DIPFIT toolbox.
+Purpose: To ensure that only brain-related components are included in further analysis and to localise the source of brain activity within the head model.
+Figures: Fig. 1B shows equivalent dipole locations for the fmθ cluster components.
+Results Section: Frontal midline theta cluster.
+Data Epoch Selection
+Epoch Creation
+Action: Separate the continuous data into 3-s epochs starting 1 s before and ending 2 s after each stimulus onset.
+Purpose: To focus on specific periods of interest around stimulus presentations.
+Figure: Results will identify epochs with significant theta power contributions during Memorise-letter trials, similar to Fig. 1E.
+%}
 
 %%
 % Set variables
@@ -204,7 +224,7 @@ EEG = pop_dipfit_settings(EEG, 'hdmfile', fullfile(pathToEEGLAB, 'standard_BEM/s
 EEG = pop_multifit(EEG, [], 'threshold', 15, 'plotopt', {'normlen', 'on'});
 disp('Dipole fitting complete');
 
-% Automatically categorize components using ICLabel
+% Automatically categorise components using ICLabel
 EEG = pop_iclabel(EEG, 'default');
 disp('ICA componets labled');
 
@@ -248,7 +268,7 @@ disp('Data saved');
 
 
 %%
-% Segment data into epochs time-locked to the onsets of Memorize, Ignore, and Probe stimuli
+% Segment data into epochs time-locked to the onsets of Memorise, Ignore, and Probe stimuli
 % Segmented after preprocessing since in paper the epochs were to save
 % computational resources.
 %EEG_memorise = pop_epoch(EEG, {'s30', 's31', 's32', 's33', 's34', 's35', 's36', 's37', 's50', 's51', 's52', 's53', 's54', 's55', 's56', 's57', 's70', 's71', 's72', 's73', 's74', 's75', 's76', 's77'}, [-1 2], 'epochinfo', 'yes');
@@ -324,3 +344,31 @@ disp('Epochs saved');
 disp('Pre-processing complete and epoched datasets saved.');
 
 %%
+%{
+% Compute and plot equivalent dipoles for ICA components
+
+% Load ICA weights and sphere
+load('ica_weights.mat', 'ica_weights', 'ica_sphere', 'ica_components');
+
+% Load channel locations
+chanlocs = load('channel_locations.mat');
+
+% Compute equivalent dipoles
+dipfit_settings = struct('model', 'single', 'rv_threshold', 0.15, 'vol', []);
+[~, dipoles] = fit_dipoles(ica_weights, ica_sphere, chanlocs, dipfit_settings);
+
+% Extract frontal components (example criteria, modify as needed)
+frontal_dipoles = find_dipoles_in_region(dipoles, 'frontal');
+
+% Plot dipoles
+figure;
+plot_dipoles(frontal_dipoles, 'color', 'pink');
+title('Equivalent Dipole Locations for Frontal Components');
+xlabel('X');
+ylabel('Y');
+zlabel('Z');
+grid on;
+
+% Save the figure
+savefig('frontal_dipoles.fig');
+%}

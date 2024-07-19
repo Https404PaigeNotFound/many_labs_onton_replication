@@ -2,6 +2,14 @@
 % EEGLAB 2024.0 | MATLAB R2024a
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%{
+Memory Load and Task Comparisons
+Memory Load Separation and ERSP Regression
+Action: Separate Memorise and Ignore letters by memory load and compute ERSPs for each condition. Regress ERSPs on memory load at each time/frequency point.
+Purpose: To study how spectral power evolves with increasing memory load.
+Figures: Fig. 6 shows memory load and task comparisons in ERSPs.
+Results Section: Mean spectral power change.
+%}
 %%
 
 % Memory load and other task comparisons
