@@ -75,15 +75,6 @@ disp('Bandpass filter comeplete');
 EEG = pop_eegfiltnew(EEG, [], 50);
 disp('Lowpass filter complete');
 
-%%
-
-% Referencing is performed after initial filtering and artifact rejection but before ICA. This approach ensures that the data is cleaner and less noisy, for accurate ICA decomposition.
-% Re-reference to the right mastoid 
-EEG = pop_reref(EEG, 'M2');
-% Re-reference to the right mastoid (assume 'M2' is the right mastoid in your channel locations)
-%EEG = pop_reref(EEG, find(strcmp({EEG.chanlocs.labels}, 'M2')));
-disp('Re-referencing complete');
-
 
 %%
 
@@ -93,6 +84,17 @@ disp('Re-referencing complete');
 EEG = pop_clean_rawdata(EEG, 'FlatlineCriterion', 4, 'ChannelCriterion', 0.85, 'LineNoiseCriterion', 4, 'Highpass', 'off', ...
     'BurstCriterion', 20, 'WindowCriterion', 0.25, 'BurstRejection', 'on', 'Distance', 'Euclidian', 'WindowCriterionTolerances', [-Inf 7]);
 disp('Automated artifact rejection complete');
+
+
+%%
+
+% Referencing is performed after initial filtering and artifact rejection but before ICA. This approach ensures that the data is cleaner and less noisy, for accurate ICA decomposition.
+% Re-reference to the right mastoid 
+EEG = pop_reref(EEG, 'M2');
+% Re-reference to the right mastoid (assume 'M2' is the right mastoid in your channel locations)
+%EEG = pop_reref(EEG, find(strcmp({EEG.chanlocs.labels}, 'M2')));
+disp('Re-referencing complete');
+
 
 %%
 
