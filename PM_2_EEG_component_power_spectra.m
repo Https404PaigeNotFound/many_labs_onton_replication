@@ -5,7 +5,7 @@
 %{
 Component Power Spectra
 Power Spectrum Calculation
-Action: Calculate power spectra for each task epoch by averaging FFT spectra computed using data window lengths of 256 points.
+Action: Calculate power spectra for each task epoch by averaging FFT spectra computed using data window lengths of 512 points without zero-padding.
 Purpose: To analyse the frequency components of brain activity during different task conditions.
 Figure:  Fig. 1C shows power spectra of individual components in the fmθ cluster. Fig. 1D shows power spectra at the Fz electrode.
 Results Section: Frontal midline theta cluster.
@@ -54,9 +54,8 @@ for subj = 1:length(Probe_epoch_fileNames)
     disp('independent component activations computed')
     
     % Compute the power spectra using FFT with zero-padding to 512 points
-    winLength = 256; % Window length of 256 points
-    zeroPad = 512; % Zero-padding to 512 points
-    [probe_spectra, probe_freqs] = spectopo(EEG_Probe_epoch.icaact, 0, EEG_Probe_epoch.srate, 'component', 'all', 'winsize', winLength, 'overlap', 0, 'plot', 'off', 'pad', zeroPad);
+    winLength = 512; % Window length of 512 points (without zero-padding)
+    [probe_spectra, probe_freqs] = spectopo(EEG_Probe_epoch.icaact, 0, EEG_Probe_epoch.srate, 'component', 'all', 'winsize', winLength, 'overlap', 0, 'plot', 'off');
     disp('power spectra computed')
     
     % Debugging: Check the output of spectopo

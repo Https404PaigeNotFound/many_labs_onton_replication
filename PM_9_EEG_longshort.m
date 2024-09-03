@@ -4,13 +4,14 @@
 %{
 Long and Short Letter Presentations
 Comparison Analysis
-Action: Compare single-trial and mean activities of components between Long and Short letter presentations.
-Purpose: To determine if presentation length affects spectral power changes.
-Figures: Fig. 7 compares short versus long letter presentation.
+Action: Apply Independent Component Analysis (ICA) to combined Long and Short letter presentation data, then compare ERSPs of specific independent components (ICs) between conditions.
+Purpose: To determine if presentation length affects spectral power changes, specifically in theta and low-beta bands, by focusing on the activity of independent components related to cognitive processing.
+Figures: Fig. 7 compares ERSP differences between short versus long letter presentations for specific ICs.
 Results Section: Short presentation control condition.
 %}
 
-%% Long vs Short Letter Presentations
+
+%% Long vs Short Letter Presentations based on ERSPs of Independent Components
 
 % Set variables
 clear;
@@ -23,49 +24,39 @@ eeglab;
 % Add the subdirectory to the path which contains custom functions
 addpath('utils');
 
-% Paths to Long and Short letter presentation data
-long_presentation_filepath = fullfile(pathToEEGLAB, '2_epoch_data/long_presentation');
-short_presentation_filepath = fullfile(pathToEEGLAB, '2_epoch_data/short_presentation');
+% Paths to Long and Short letter presentation EEG data
+long_presentation_filepath = fullfile(pathToEEGLAB, '2_epoch_data', 'long_presentation');
+short_presentation_filepath = fullfile(pathToEEGLAB, '2_epoch_data', 'short_presentation');
+
+% Initialize variables for storing results
+ersp_long_all = struct();
+ersp_short_all = struct();
+times_all = [];
+freqs_all = [];
+subject_ids = {};
 
 % Get a list of Long and Short letter presentation .set files
 Long_epoch_files = dir(fullfile(long_presentation_filepath, '*.set'));
 Short_epoch_files = dir(fullfile(short_presentation_filepath, '*.set'));
 
-% Extract the filenames
-Long_epoch_fileNames = {Long_epoch_files.name};
-Short_epoch_fileNames = {Short_epoch_files.name};
-
-% Display the list of files
-disp('Long Presentation Files:');
-disp(Long_epoch_fileNames);
-disp('Short Presentation Files:');
-disp(Short_epoch_fileNames);
-
-% Check if there are 9 subjects for both conditions
-if length(Long_epoch_fileNames) ~= 9 || length(Short_epoch_fileNames) ~= 9
-    error('Mismatch in the number of Long and Short presentation files. Ensure there are 9 files for each condition.');
+% Check if there are matching numbers of subjects for both conditions
+if length(Long_epoch_files) ~= length(Short_epoch_files)
+    error('Mismatch in the number of Long and Short presentation files.');
 end
 
-% Initialize variables for storing results
-component_activities_long = [];
-component_activities_short = [];
-subject_ids = {};
-
 % Loop through the subjects
-for subj = 1:length(Long_epoch_fileNames)
-    % Load the Long and Short presentation data
-    EEG_long = pop_loadset('filename', Long_epoch_fileNames{subj}, 'filepath', long_presentation_filepath);
-    EEG_short = pop_loadset('filename', Short_epoch_fileNames{subj}, 'filepath', short_presentation_filepath);
+for subj = 1:length(Long_epoch_files)
+    % Load the Long and Short presentation EEG data
+    EEG_long = pop_loadset('filename', Long_epoch_files{subj}, 'filepath', long_presentation_filepath);
+    EEG_short = pop_loadset('filename', Short_epoch_files{subj}, 'filepath', short_presentation_filepath);
 
-    % Display subject ID
+    % Ensure subject IDs match
     subject_id_long = EEG_long.subject;
     subject_id_short = EEG_short.subject;
-    
-    % Ensure subject IDs match
     if ~strcmp(subject_id_long, subject_id_short)
         error(['Subject ID mismatch between Long and Short presentations: ' subject_id_long ' vs ' subject_id_short]);
     end
-
+    
     subject_ids{end+1} = subject_id_long;
     
     % Concatenate the Long and Short presentation data for ICA
@@ -74,50 +65,63 @@ for subj = 1:length(Long_epoch_fileNames)
     % Perform ICA on the combined data
     EEG_combined = pop_runica(EEG_combined, 'extended', 1, 'stop', 1e-7);
     
-    % Extract components whose locations match the clustered Long-presentation components
-    % Assuming a custom function find_matching_components is available for this
-    matching_components = find_matching_components(EEG_combined, EEG_long);
+    % Identify the independent components (ICs) of interest (e.g., fmθ cluster)
+    % Check the function
+    ICs_of_interest = identify_components_of_interest(EEG_combined);
 
-    % Store single-trial and mean activities of matching components for both conditions
-    component_activities_long{subj} = EEG_long.icaact(matching_components, :, :);
-    component_activities_short{subj} = EEG_short.icaact(matching_components, :, :);
+    % Loop through each independent component of interest
+    for ic = 1:length(ICs_of_interest)
+        % Calculate ERSPs for the Long presentation trials
+        [ersp_long, times, freqs] = pop_newtimef(EEG_combined, 0, ICs_of_interest(ic), ...
+            [-1000 1998], [3 0.5], 'baseline', NaN, 'plotersp', 'off', ...
+            'plotitc', 'off', 'plotphase', 'off', ...
+            'title', ['Long Presentation ERSP (IC ' num2str(ICs_of_interest(ic)) ')']);
+        
+        % Calculate ERSPs for the Short presentation trials
+        [ersp_short, ~, ~] = pop_newtimef(EEG_combined, 0, ICs_of_interest(ic), ...
+            [-1000 1998], [3 0.5], 'baseline', NaN, 'plotersp', 'off', ...
+            'plotitc', 'off', 'plotphase', 'off', ...
+            'title', ['Short Presentation ERSP (IC ' num2str(ICs_of_interest(ic)) ')']);
+        
+        % Store the ERSP data
+        ersp_long_all.(subject_id_long).(['IC_' num2str(ICs_of_interest(ic))]) = ersp_long;
+        ersp_short_all.(subject_id_short).(['IC_' num2str(ICs_of_interest(ic))]) = ersp_short;
+    end
+    
+    % Store times and frequencies assuming consistency across subjects
+    times_all = times;  
+    freqs_all = freqs;  
 end
 
-% Compare single-trial and mean activities between Long and Short conditions
+% Compare ERSPs between Long and Short conditions for each IC
 for subj = 1:length(subject_ids)
-    long_activity = component_activities_long{subj};
-    short_activity = component_activities_short{subj};
+    subject_id = subject_ids{subj};
     
-    % Calculate mean activities for both conditions
-    mean_long_activity = mean(long_activity, 3);
-    mean_short_activity = mean(short_activity, 3);
-    
-    % Calculate differences in spectral power
-    power_diff = mean_long_activity - mean_short_activity;
-    
-    % Visualize the comparison for each subject
-    figure;
-    subplot(2, 1, 1);
-    plot(mean_long_activity);
-    title(['Mean Activity - Long Presentation (Subject ' subject_ids{subj} ')']);
-    xlabel('Component');
-    ylabel('Activity');
-    
-    subplot(2, 1, 2);
-    plot(mean_short_activity);
-    title(['Mean Activity - Short Presentation (Subject ' subject_ids{subj} ')']);
-    xlabel('Component');
-    ylabel('Activity');
-    
-    % Optionally, visualize the power difference
-    figure;
-    plot(power_diff);
-    title(['Difference in Mean Activity (Long - Short) (Subject ' subject_ids{subj} ')']);
-    xlabel('Component');
-    ylabel('Power Difference');
+    IC_names = fieldnames(ersp_long_all.(subject_id));
+    for ic_idx = 1:length(IC_names)
+        IC_name = IC_names{ic_idx};
+        
+        long_ersp = ersp_long_all.(subject_id).(IC_name);
+        short_ersp = ersp_short_all.(subject_id).(IC_name);
+        
+        % Calculate differences in ERSPs
+        ersp_diff = long_ersp - short_ersp;
+        
+        % Visualize the ERSP difference for each IC
+        figure;
+        imagesc(times_all, freqs_all, ersp_diff);
+        xlabel('Time (ms)');
+        ylabel('Frequency (Hz)');
+        title(['ERSP Difference (Long - Short) - ' IC_name ' (Subject ' subject_id ')']);
+        colorbar;
+        
+        % Optional: Save the ERSP difference images
+        saveas(gcf, fullfile(pathToEEGLAB, '6_comparisons', ['ersp_diff_' IC_name '_' subject_id '.png']));
+    end
 end
 
-% Save results for further analysis
-save(fullfile(pathToEEGLAB, '6_comparisons', 'long_vs_short_activities.mat'), 'component_activities_long', 'component_activities_short', 'subject_ids');
+% Save ERSP results for further analysis
+save(fullfile(pathToEEGLAB, '6_comparisons', 'long_vs_short_ersp_differences.mat'), ...
+    'ersp_long_all', 'ersp_short_all', 'subject_ids', 'times_all', 'freqs_all');
 
-disp('Comparison of Long vs Short letter presentations complete.');
+disp('Comparison of Long vs Short letter presentations based on ERSPs of Independent Components complete.');
