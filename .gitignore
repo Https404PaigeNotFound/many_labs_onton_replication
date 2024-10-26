@@ -5,6 +5,9 @@
 !*.m
 
 # ...and not this folder...
+!brainvision_eeg/
+
+# ...and not this folder...
 !utils/
 
 # ...and not anything in that folder
