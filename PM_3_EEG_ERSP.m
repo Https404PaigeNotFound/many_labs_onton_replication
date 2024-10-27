@@ -37,8 +37,8 @@ ersp_save_dirs = {'3_ERSP_data/probe', '3_ERSP_data/memorise', '3_ERSP_data/igno
 baseline_window = [0, 4]; % First 4 seconds of the fixation period
 
 % Define the window length for FFT and step size (in samples)
-ersp_window = 256; % Window length in samples
-ersp_step = 128; % Step size in samples (50% overlap). Source material does not spec, value chosen to balance temporal resolution and computational efficiency.
+ersp_window = 512; % Window length in samples
+ersp_step = 512; % Step size set to 512 samples to have no overlap
 
 % Number of bootstrap resamples for statistical significance
 num_bootstraps = 1000;

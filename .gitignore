@@ -7,6 +7,9 @@
 # ...and not this folder...
 !brainvision_eeg/
 
+# ...and not anything in that folder
+!brainvision_eeg/**
+
 # ...and not this folder...
 !utils/
 
