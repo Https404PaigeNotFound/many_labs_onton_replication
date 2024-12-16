@@ -34,6 +34,10 @@ addpath('utils');
 
 % Get a list of all .vhdr files in the directory
 EEGfiles = dir(fullfile(pathToEEGData, '*.vhdr'));
+% Raise error if no files found
+if isempty(EEGfiles)
+    error('No .vhdr files found in the specified directory: %s', pathToEEGData);
+end
 EEGfileNames = {EEGfiles.name}; % Extract the names of the files
 disp(EEGfileNames); % Display the list of .vhdr files
 
@@ -58,7 +62,12 @@ for i = 1:length(EEGfileNames)
     % ensure the brain vision extension is installed, can install
     % throught the GUI
     fprintf('Processing file: %s\n', EEGfileNames{i});
-    EEG = pop_loadbv(pathToEEGData, EEGfileNames{i}); 
+    try
+        EEG = pop_loadbv(pathToEEGData, EEGfileNames{i});
+    catch ME
+        warning('Error loading file: %s\n%s', EEGfileNames{i}, ME.message);
+        continue; % Skip to the next file
+    end
 
     % Add channel locations
     chanlocs = EEG.chanlocs;
@@ -78,12 +87,23 @@ for i = 1:length(EEGfileNames)
     disp('Bandpass filter comeplete');
 
     % Apply automated artifact rejection algorithms
-    EEG = pop_clean_rawdata(EEG, 'FlatlineCriterion', 4, 'ChannelCriterion', 0.85, 'LineNoiseCriterion', 4, 'Highpass', 'off', ...
-        'BurstCriterion', 20, 'WindowCriterion', 0.25, 'BurstRejection', 'on', 'Distance', 'Euclidian', 'WindowCriterionTolerances', [-Inf 7]);
+    try
+        EEG = pop_clean_rawdata(EEG, 'FlatlineCriterion', 4, 'ChannelCriterion', 0.85, 'LineNoiseCriterion', 4, 'Highpass', 'off', ...
+            'BurstCriterion', 20, 'WindowCriterion', 0.25, 'BurstRejection', 'on', 'Distance', 'Euclidian', 'WindowCriterionTolerances', [-Inf 7]);
+    catch ME
+        warning('Artifact rejection failed for file: %s\n%s', EEGfileNames{i}, ME.message);
+        continue; % Skip problematic datasets
+    end
     disp('Automated artifact rejection complete');
 
     % Re-reference to the right mastoid 
-    EEG = pop_reref(EEG, 'M2');
+    if any(strcmp({EEG.chanlocs.labels}, 'M2'))
+        EEG = pop_reref(EEG, {'M2'});
+        disp('Re-referencing to M2 complete.');
+    else
+        warning('M2 channel not found. Re-referencing skipped for file: %s', EEGfileNames{i});
+    end
+
     disp('Re-referencing complete');
 
     % Interpolate removed channels based on the original channel locations
@@ -224,7 +244,8 @@ for i = 1:length(EEGfileNames)
     dips("=======================")
 
     % Clear variables for next iteration
-    clear EEG;
+    clear EEG EEG_memorise EEG_ignore EEG_probe EEG_fixation EEG_maintenance;
+
 end
 
 disp('Pre-processing complete and epoched datasets saved.');
