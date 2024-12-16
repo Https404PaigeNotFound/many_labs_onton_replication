@@ -14,12 +14,7 @@
 !utils/**
 
 # ...also don't ignore these folders, since it' gives structure
-!1_preprocessed_data/
-!2_epoch_data/
-!3_ERSP_data/
-!4_memory_load/
-!5_group_ERSP/
-!6_ERC/
+
 
 # Ensure .gitignore itself is not ignored
 !.gitignore
