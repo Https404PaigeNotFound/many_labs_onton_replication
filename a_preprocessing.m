@@ -3,7 +3,6 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % MATLAB Script for EEG Preprocessing using EEGLAB
-% Author: Paige Metcalfe
 
 %{
 Input: Raw EEG data
@@ -77,7 +76,7 @@ for i = 1:length(EEGfileNames)
     EEG = pop_chanedit(EEG, 'lookup', fullfile(pathToEEGLAB, 'channel_location_files', 'Standard-10-10-CUSTOM63.ced'));
     
     % Visualise the cleaned EEG data using EEGLAB GUI
-    eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Not clean EEG data');
+    %eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Not clean EEG data');
     
     % Reclassify events
     EEG = reclassify_events(EEG);
@@ -160,10 +159,15 @@ for i = 1:length(EEGfileNames)
     eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Prepreprocessed EEG Data After Artifact Rejection');
 
     % Check everything is saved
+    disp("icaweights")
     disp(EEG.icaweights); % Display the ICA weights matrix
+    disp("icasphere")
     disp(EEG.icasphere);  % Display the ICA sphere matrix
+    disp("icaact")
     disp(EEG.icaact);     % Display matrix of independent component activations
+    disp("ic_classification")
     disp(EEG.etc.ic_classification);  % Display the classification of components (e.g., ICLabel results)
+    disp("dipfit")
     disp(EEG.dipfit);     % Display the dipole model information (if DIPFIT is applied)
 
 
@@ -241,7 +245,7 @@ for i = 1:length(EEGfileNames)
     disp(i)
     disp("of")
     disp(length(EEGfileNames))
-    dips("=======================")
+    disp("=======================")
 
     % Clear variables for next iteration
     clear EEG EEG_memorise EEG_ignore EEG_probe EEG_fixation EEG_maintenance;
