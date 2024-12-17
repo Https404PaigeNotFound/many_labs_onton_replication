@@ -1,13 +1,9 @@
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% EEGLAB 2024.0 | MATLAB R2024a
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % MATLAB Script for EEG Preprocessing using EEGLAB
 
 %{
 Input: Raw EEG data
 Output: Cleaned data and epoch data files 
-Summary of steps:
 %}
 
 
@@ -17,7 +13,7 @@ clear;
 % Set directories
 pathToEEGLAB = pwd; % Sets path to EEGLAB as the current working directory
 pathToEEGData = fullfile(pathToEEGLAB, 'brainvision_eeg'); % Assumes raw data is in the brainvision_eeg file
-outputFolder = fullfile(pathToEEGLAB, 'a_preprocessed_data'); % Output folder for preprocessed data
+outputFolder = fullfile(pathToEEGLAB, 'analysis_output/a_preprocessed_data'); % Output folder for preprocessed data
 if ~exist(outputFolder, 'dir')
     mkdir(outputFolder);
 end
@@ -117,8 +113,6 @@ for i = 1:length(EEGfileNames)
     EEG = pop_runica(EEG, 'extended', 1, 'stop', 1e-7);
     disp('ICA conducted');
     
-    %{
-    % TODO: Set up installation!
     % ensure DIPFIT plugin is installed
     % Apply DIPFIT settings to localise ICs anatomically.
     EEG = pop_dipfit_settings(EEG, 'hdmfile', 'standard_BEM/standard_vol.mat', ...
@@ -141,8 +135,6 @@ for i = 1:length(EEGfileNames)
     %dipplot(EEG, 'components', 1:length(EEG.icachansind), 'view', [0 0], 'normlen', 'on');
     %disp('Dipole locations visualised.');
 
-    %}
-
     % Automatically categorise components using ICLabel
     EEG = pop_iclabel(EEG, 'default');
     disp('ICA componets labled');
@@ -154,9 +146,6 @@ for i = 1:length(EEGfileNames)
     % Remove flagged components
     EEG = pop_subcomp(EEG, [], 0);
     disp('Remove flagged components');
-
-    % Visualise the cleaned EEG data using EEGLAB GUI
-    eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Prepreprocessed EEG Data After Artifact Rejection');
 
     % Check everything is saved
     disp("icaweights")
@@ -240,8 +229,10 @@ for i = 1:length(EEGfileNames)
     % Save epoch
     pop_saveset(EEG_maintenance, 'filename', [fileBase '_maintenance.set'], 'filepath', fullfile(outputFolder, '2_epoch_data/maintenance'));
 
-
+    % Visualise the cleaned EEG data using EEGLAB GUI
+    eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Prepreprocessed EEG Data After Artifact Rejection');
     % Display loop progress
+    
     disp(i)
     disp("of")
     disp(length(EEGfileNames))
