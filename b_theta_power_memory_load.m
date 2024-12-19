@@ -30,7 +30,6 @@ addpath('utils');
 
 % Analysis Parameters
 thetaBand = [5 7]; % Theta frequency range (5–7 Hz)
-timeWindow = [0 1.5]; % Task-relevant time window for analysis
 memoryLoads = [3, 5, 7]; % Memory load conditions
 
 % Load Preprocessed Memorise and Fixation Epochs
@@ -298,6 +297,12 @@ for i = 1:length(matchedFiles)
     %erspL5_means = [erspL5_means; meanERSP_L5];
     %erspL7_means = [erspL7_means; meanERSP_L7];
 
+
+    %% Append data for CSV and ANOVA
+    % Extract participant ID without file extension
+    erspL3_means(end+1) = erspL3_means;
+    %erspL5_means(end+1) = meanL5;
+    %erspL7_means(end+1) = meanL7;
 end
 
 %% Export Results to CSV
@@ -314,23 +319,14 @@ writetable(csvTable, csvFileName);
 disp(['CSV file saved: ' csvFileName]);
 
 %% Perform Repeated-Measures ANOVA
-thetaPowerMatrix = [erspL3_means, erspL5_means, erspL7_means];
-loadLabels = {'Load_3', 'Load_5', 'Load_7'};
-
-% Create a table for the repeated measures model
+loadLabels = arrayfun(@(x) sprintf('Load_%d', x), memoryLoads, 'UniformOutput', false);
 thetaPowerTable = array2table(thetaPowerMatrix, 'VariableNames', loadLabels);
-thetaPowerTable.ParticipantID = participantIDs';
 
-% Define the within-subjects design
-withinDesign = table(memoryLoads', 'VariableNames', {'MemoryLoad'});
-
-% Fit the repeated measures model
-rm = fitrm(thetaPowerTable, 'Load_3-Load_7~1', 'WithinDesign', withinDesign);
-
-% Perform repeated-measures ANOVA
+% ANOVA Model
+rm = fitrm(thetaPowerTable, sprintf('%s-%s~1', loadLabels{1}, loadLabels{end}), 'WithinDesign', memoryLoads');
 ranovaResults = ranova(rm);
 
-% Display results
+% Display Results
 disp('Repeated-Measures ANOVA Results:');
 disp(ranovaResults);
 

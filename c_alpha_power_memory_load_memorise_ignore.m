@@ -1,4 +1,4 @@
-
+ % alpha (typically 8-12 hz)
 
 %{
 
