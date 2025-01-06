@@ -8,7 +8,7 @@ Summary: Identify fmθ Component, Validate Near ACC, Compute ERSPs, and Perform 
 %}
 
 % Set variables
-clear;
+clear; clc;
 
 % Set directories
 pathToEEGLAB = pwd; % Sets path to EEGLAB as the current working directory
@@ -31,6 +31,7 @@ addpath('utils');
 % Analysis Parameters
 thetaBand = [5 7]; % Theta frequency range (5–7 Hz)
 memoryLoads = [3, 5, 7]; % Memory load conditions
+freqs = [2 30];
 
 % Load Preprocessed Memorise and Fixation Epochs
 memoriseFiles = dir(fullfile(memoriseEpochFolder, '*_memorise.set'));
@@ -88,31 +89,15 @@ for i = 1:length(matchedFiles)
 
     %% Step A1: Compute ERSPs for Memorise Epochs (Baseline-Normalised)
     fprintf('Computing ERSPs for memorise epochs...\n');
-    % Define parameters for ERSP computation
-    freqs = [2 30]; % Frequency range for ERSP
-    baseline_window = [-1000 3000]; % Fixation baseline (ms)
-    %{
-    Component spectra were normalised for between-subject comparison by subtracting mean log power from single-trial log power at each analysis frequency between 2 Hz and 30 Hz.
-    %}
+    ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
 
-    % Compute mean log power of the fixation baseline (averaging across all fixation epochs)
-    log_ersp_fixation = log(compute_ersp_baseline(EEG_fixation, freqs));
-    baseline_power = mean(log_ersp_fixation, 3); % Average across all fixation epochs
+    fprintf('Baseline normalisation complete.\n');
 
-    % Compute ERSPs
-    [ersp_memorise, times, freqs] = compute_ersp_epochs(EEG_memorise, freqs);
-
-    % Log-transform the memorise ERSPs
-    log_ersp_memorise = log(ersp_memorise);
-    
-    
-    % Baseline-normalise the memorise ERSPs
-    baseline_normalised_ersp = log_ersp_memorise - baseline_power;
 
     %% Step A2: ERSP Decomposition and Template Matching
     fprintf('Performing ERSP decomposition...\n');
     % Perform PCA to reduce dimensionality
-    [pca_coeff, pca_scores] = pca(reshape(baseline_normalised_ersp, [], size(baseline_normalised_ersp, 3)));
+    [pca_coeff, pca_scores] = pca(reshape(ERSP_baseline_norm, [], size(ERSP_baseline_norm, 3)));
 
     % Perform ICA to extract independent time-frequency templates
     [ica_weights, ica_templates] = runica(pca_scores');
@@ -666,6 +651,7 @@ end
 end
 %}
 
+%{
 function ersp_baseline = compute_ersp_baseline(EEG_fixation, freqs)
     % Validate frequencies
     if any(freqs <= 0)
@@ -673,16 +659,26 @@ function ersp_baseline = compute_ersp_baseline(EEG_fixation, freqs)
     end
 
     % Update frequencies to avoid very low values
-    freqs = [4 30]; % Avoid very low frequencies (adjust as needed)
+    freqs = [4 30]; 
+    % Use fixed cycles for simplicity
+    cycles = [5];
 
+    % Debugging: Output key parameters
+    fprintf('Debug: freqs = [%g %g], cycles = %d\n', freqs(1), freqs(end), cycles);
+
+    
     % Get dimensions of the fixation data
     [num_channels, num_points, num_trials] = size(EEG_fixation.data);
 
-    % Debugging output for freqs and num_points
-    fprintf('Debug: num_points = %d, freqs = [%g %g]\n', num_points, freqs(1), freqs(end));
+    
+    % Debugging
+    fprintf('Debug: `winsize` = %g, num_points = %d\n', winsize, num_points);
 
-    % Use fixed cycles for simplicity
-    cycles = 3;
+    % Safety check: Ensure `winsize` is valid
+    if winsize >= num_points
+        error('Invalid `winsize`: Must be less than the number of points in the epoch.');
+    end
+    
 
     % Preallocate array to store baseline ERSP for each trial
     baselineERSP_all = zeros(length(freqs), num_points, num_trials);
@@ -697,10 +693,8 @@ function ersp_baseline = compute_ersp_baseline(EEG_fixation, freqs)
             newtimef(trial_data, num_points, ...
                      [EEG_fixation.xmin EEG_fixation.xmax] * 1000, ...
                      EEG_fixation.srate, cycles, ... % Use fixed cycles
-                     'winsize', 0, ... % Automatically determine window size
                      'baseline', NaN, 'plotitc', 'off', 'plotersp', 'off', ...
                      'freqs', freqs, 'freqscale', 'linear', 'padratio', 2, ...
-                     'wletmethod', 'dftfilt2', ... % Use simpler wavelet method
                      'verbose', 'on');
 
         % Store the result
@@ -709,4 +703,141 @@ function ersp_baseline = compute_ersp_baseline(EEG_fixation, freqs)
 
     % Average across trials to get the final baseline ERSP
     ersp_baseline = mean(baselineERSP_all, 3);
+end
+
+function ersp_baseline = compute_ersp_baseline(EEG_fixation, freqs)
+    % Validate frequencies
+    if any(freqs <= 0)
+        error('Invalid frequencies in `freqs`. Frequencies must be positive: %s', mat2str(freqs));
+    end
+
+    % Define chunk size based on memory limitations
+    max_trials_per_chunk = 50; % Process 50 trials at a time (adjust based on available memory)
+    num_trials = size(EEG_fixation.data, 3);
+    num_chunks = ceil(num_trials / max_trials_per_chunk);
+
+    % Preallocate arrays for concatenating results
+    ersp_all = [];
+    times_all = [];
+    freqs_all = [];
+
+    % Iterate over chunks of task data
+    for chunk_idx = 1:num_chunks
+        % Define the range of trials for this chunk
+        trial_start = (chunk_idx - 1) * max_trials_per_chunk + 1;
+        trial_end = min(chunk_idx * max_trials_per_chunk, num_trials);
+
+        % Extract chunk of trials
+        data_chunk = EEG_fixation.data(:, :, trial_start:trial_end);
+
+        % Debugging: print the size of data_chunk
+        fprintf('Processing chunk %d/%d: Trials %d to %d\n', ...
+                chunk_idx, num_chunks, trial_start, trial_end);
+        fprintf('Data chunk size: %s\n', mat2str(size(data_chunk)));
+
+        % Compute ERSP for task data chunk without baseline correction
+        try
+            [ersp_chunk, times, freqs] = newtimef(data_chunk, EEG_fixation.pnts, ...
+                [EEG_fixation.xmin, EEG_fixation.xmax] * 1000, EEG_fixation.srate, [3 0.5], ...
+                'baseline', NaN, 'trialbase', 'off', ... % Disable baseline correction explicitly
+                'freqs', freqs, 'nfreqs', length(freqs), 'freqscale', 'linear', ...
+                'basenorm', 'off', 'plotitc', 'off', 'plotersp', 'off', ...
+                'padratio', 2);
+        catch ME
+            fprintf('Error in chunk %d: %s\n', chunk_idx, ME.message);
+            rethrow(ME);
+        end
+
+        % Concatenate results across chunks
+        if chunk_idx == 1
+            % Initialise time and frequency axes on first iteration
+            times_all = times;
+            freqs_all = freqs;
+        end
+        ersp_all = cat(4, ersp_all, ersp_chunk);
+    end
+
+    % Combine results into single output
+    ersp_baseline = mean(ersp_all, 4); % Average across trials
+end
+
+
+
+
+function mean_log_power = compute_mean_log_power(EEG_fixation, freqs)
+    % Compute ERSP for fixation epochs
+    ersp_fixation = compute_ersp_baseline(EEG_fixation, freqs);
+    
+    % Compute log power
+    log_power_fixation = log(ersp_fixation);
+
+    % Compute mean log power across epochs
+    mean_log_power = mean(log_power_fixation, 3); % Average across epochs
+end
+
+%}
+
+
+function ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
+%{
+This function computes the Event-Related Spectral Perturbation (ERSP) 
+for all channels in the "memorise" EEG dataset (EEG_memorise) and 
+normalises it using the baseline power derived from the "fixation" 
+EEG dataset (EEG_fixation). It uses the newtimef function to perform 
+time-frequency decomposition on each channel, averages the ERSP across 
+epochs, and outputs the normalized ERSP for all channels as a 
+3D array (channels × frequencies × time points).
+%}
+    % Extract data
+    activity_data = EEG_memorise.data; % Dimensions: channels x time points x epochs
+    baseline_data = EEG_fixation.data; % Dimensions: channels x time points x epochs
+    
+    % Convert baseline to 2D (collapse across epochs)
+    baseline_data_2d = reshape(baseline_data, size(baseline_data, 1), []); % Channels x (time*epochs)
+    
+    % Compute mean power across baseline epochs for normalisation
+    baseline_mean = mean(abs(baseline_data_2d).^2, 2); % Channels x frequencies (later applied per freq)
+    
+     % Initialise outputs
+    num_channels = size(activity_data, 1);
+    
+    % Use newtimef once on the first channel to get output dimensions
+    [test_ersp, ~, ~, times, freqs] = newtimef( ...
+        squeeze(activity_data(1, :, :)), ...
+        EEG_memorise.pnts, ...
+        [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, ...
+        EEG_memorise.srate, ...
+        [3 0.5], ...
+        'baseline', baseline_mean(1), ...
+        'plotersp', 'off', ...
+        'plotitc', 'off' ...
+    );
+
+    % Get actual output dimensions from newtimef
+    num_freqs = size(test_ersp, 1);
+    num_times = size(test_ersp, 2);
+
+    % Preallocate output array
+    ersp_all_channels = zeros(num_channels, num_freqs, num_times);
+
+    % Process all channels
+    for chan = 1:num_channels
+        % Run newtimef for each channel
+        [ersp, ~, ~, ~, ~] = newtimef( ...
+            squeeze(activity_data(chan, :, :)), ...
+            EEG_memorise.pnts, ...
+            [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, ...
+            EEG_memorise.srate, ...
+            [3 0.5], ...
+            'baseline', baseline_mean(chan), ...
+            'plotersp', 'off', ...
+            'plotitc', 'off' ...
+        );
+
+        % Store ERSP for current channel
+        ersp_all_channels(chan, :, :) = mean(ersp, 3); % Average across epochs
+    end
+
+    % Return baseline-normalised ERSP
+    ERSP_baseline_norm = ersp_all_channels;
 end
