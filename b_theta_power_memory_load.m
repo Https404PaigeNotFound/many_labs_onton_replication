@@ -76,6 +76,194 @@ end
 %% Loop Through Participant Files
 for i = 1:length(matchedFiles)
     fprintf('Processing Participant %d: %s -> %s\n', i, matchedFiles(i).memoriseFile, matchedFiles(i).fixationFile);
+    participantIDs{end+1} = extractBefore(matchedFiles(i).memoriseFile, '_memorise');
+
+    % Load memorise and fixation files
+    EEG_memorise = pop_loadset('filename', matchedFiles(i).memoriseFile, 'filepath', memoriseEpochFolder);
+    EEG_fixation = pop_loadset('filename', matchedFiles(i).fixationFile, 'filepath', fixationEpochFolder);
+
+    % Ensure ICA activations
+    EEG_memorise = ensureICAActivations(EEG_memorise);
+    EEG_fixation = ensureICAActivations(EEG_fixation);
+
+    %% Step A1: Compute ERSPs for Memorise Epochs (Baseline-Normalised)
+    fprintf('Computing ERSPs for memorise epochs...\n');
+    % Define parameters for ERSP computation
+    freqs = [2 30]; % Frequency range for ERSP
+    baseline_window = [-1000 3000]; % Fixation baseline (ms)
+    %{
+    Component spectra were normalised for between-subject comparison by subtracting mean log power from single-trial log power at each analysis frequency between 2 Hz and 30 Hz.
+    %}
+
+    % Compute mean log power of the fixation baseline (averaging across all fixation epochs)
+    log_ersp_fixation = log(compute_ersp_baseline(EEG_fixation, freqs));
+    baseline_power = mean(log_ersp_fixation, 3); % Average across all fixation epochs
+
+    % Compute ERSPs
+    [ersp_memorise, times, freqs] = compute_ersp_epochs(EEG_memorise, freqs);
+
+    % Log-transform the memorise ERSPs
+    log_ersp_memorise = log(ersp_memorise);
+    
+    
+    % Baseline-normalise the memorise ERSPs
+    baseline_normalised_ersp = log_ersp_memorise - baseline_power;
+
+    %% Step A2: ERSP Decomposition and Template Matching
+    fprintf('Performing ERSP decomposition...\n');
+    % Perform PCA to reduce dimensionality
+    [pca_coeff, pca_scores] = pca(reshape(baseline_normalised_ersp, [], size(baseline_normalised_ersp, 3)));
+
+    % Perform ICA to extract independent time-frequency templates
+    [ica_weights, ica_templates] = runica(pca_scores');
+
+    % Identify dominant theta template
+    theta_template_idx = find_theta_template(ica_templates, freqs, thetaBand);
+
+    % Score each component based on alignment with the theta template
+    theta_scores = score_theta_alignment(ica_templates, theta_template_idx);
+    
+    % Perform Spatial Validation with DIPFIT
+    fprintf('Performing spatial validation with DIPFIT...\n');
+    EEG_memorise = performDipfit(EEG_memorise);
+
+    % Extract dipole information
+    dipole_positions = vertcat(EEG_memorise.dipfit.model.posxyz); % Dipole locations
+    residual_variances = [EEG_memorise.dipfit.model.rv]; % Residual variance
+    
+    % Filter ICs by spatial validity
+    valid_idx = (dipole_positions(:, 2) > 0) & (residual_variances <= 0.15); % Anterior and valid dipoles
+    
+    % Retain theta scores for spatially valid components
+    valid_theta_scores = theta_scores(valid_idx);
+    
+    % Select the fmθ Component
+    if ~isempty(valid_theta_scores)
+        % Find the spatially valid IC with the highest theta score
+        [~, max_valid_idx] = max(valid_theta_scores); % Index within valid components
+        fm_theta_idx = find(valid_idx); % Map to original IC indices
+        fm_theta_idx = fm_theta_idx(max_valid_idx); % Final fmθ component index
+        fprintf('Selected IC %d as the fmθ component.\n', fm_theta_idx);
+    else
+        error('No spatially valid fmθ component found for this participant.');
+    end
+
+
+    %% Step A3: Cluster Components Across Participants
+    % (This part will be implemented after processing all participants.)
+    fprintf('Clustering components will be performed after all participants are processed.\n');
+
+    %% Step B1: Extract Component Activity
+    fprintf('Extracting component activity for fmθ...\n');
+    fm_theta_activity = extract_component_activity(EEG_memorise, fm_theta_idx);
+
+    %% Step B2: Separate Epochs by Memory Load
+    fprintf('Separating epochs by memory load...\n');
+    memorise_by_load = split_by_eventtype(EEG_memorise, memoryLoads);
+    fixation_by_load = split_fixation_cycles(EEG_fixation, memoryLoads);
+
+    %% Step B3: Calculate Theta Power
+    fprintf('Calculating theta power...\n');
+    theta_power_memorise = compute_theta_power(fm_theta_activity, memorise_by_load, thetaBand, freqs);
+    theta_power_fixation = compute_theta_power(fm_theta_activity, fixation_by_load, thetaBand, freqs);
+
+    % Aggregate theta power
+    mean_theta_power = aggregate_theta_power(theta_power_memorise, theta_power_fixation);
+
+    %% Save Participant-Level Data
+    csvData = [csvData; mean_theta_power]; % Append to CSV data
+    erspL3_means = [erspL3_means; mean_theta_power(1)];
+    erspL5_means = [erspL5_means; mean_theta_power(2)];
+    erspL7_means = [erspL7_means; mean_theta_power(3)];
+end
+
+%% Step A3: Cluster Components Across Participants
+fprintf('Clustering fmθ components across participants...\n');
+
+% Preallocate for dipole positions
+all_dipoles = [];
+selected_fm_theta_idx = [];
+
+% Loop through participants to extract dipole positions of fmθ components
+for i = 1:length(participantIDs)
+    % Load the EEG dataset for the participant
+    EEG = pop_loadset('filename', matchedFiles(i).memoriseFile, 'filepath', memoriseEpochFolder);
+    
+    % Perform dipole fitting for the fmθ component
+    EEG = pop_dipfit_settings(EEG, 'model', 'spherical', 'coord_transform', [0 0 0], 'electrodes', 'on');
+    EEG = pop_multifit(EEG, fm_theta_idx(i), 'threshold', 15, 'plotopt', {'normlen' 'on'});
+    
+    % Extract dipole position for the fmθ component
+    dipole_pos = EEG.dipfit.model(fm_theta_idx(i)).posxyz; % Extract dipole coordinates
+    residual_var = EEG.dipfit.model(fm_theta_idx(i)).rv; % Residual variance
+
+    % Retain only valid dipoles (anterior, within residual variance threshold)
+    if residual_var <= 0.15 && dipole_pos(2) > 0 % Anterior to central sulcus
+        all_dipoles = [all_dipoles; dipole_pos]; % Append dipole coordinates
+        selected_fm_theta_idx = [selected_fm_theta_idx; i]; % Retain valid participant index
+    end
+end
+
+% Perform spatial clustering around the ACC
+fprintf('Performing spatial clustering around ACC...\n');
+
+% Define ACC centre and cluster radius
+acc_centre = [0, 30, 40]; % MNI coordinates for dorsal ACC
+cluster_radius = 20; % Radius in mm for clustering
+
+% Compute distances from ACC centre
+distances = pdist2(all_dipoles, acc_centre);
+cluster_idx = distances < cluster_radius; % Identify dipoles within the radius
+
+% Retain components within the ACC cluster
+final_dipoles = all_dipoles(cluster_idx, :);
+final_participants = selected_fm_theta_idx(cluster_idx);
+
+% Save or visualise the final fmθ cluster
+fprintf('Final cluster includes %d components from %d participants.\n', ...
+    size(final_dipoles, 1), length(final_participants));
+
+%% Export Results to CSV
+% Create a table for CSV export
+csvTable = table(participantIDs', erspL3_means', erspL5_means', erspL7_means', ...
+    'VariableNames', {'ParticipantID', 'ERSP_L3', 'ERSP_L5', 'ERSP_L7'});
+% Save the csv 
+csvFileName = fullfile(outputFolder, 'theta_power_memory_load.csv');
+writetable(csvTable, csvFileName);
+disp(['CSV file saved: ' csvFileName]);
+
+
+%% Step C1: Statistical Analysis
+fprintf('Performing statistical analysis...\n');
+% ANOVA to compare theta power across memory loads
+[p, tbl, stats] = anova_rm({erspL3_means, erspL5_means, erspL7_means});
+fprintf('ANOVA Results:\n');
+disp(tbl);
+
+% Post-hoc tests
+posthoc_results = multcompare(stats, 'CType', 'bonferroni');
+
+%% Step C2: Visualisation
+fprintf('Visualising results...\n');
+figure;
+errorbar(memoryLoads, mean([erspL3_means, erspL5_means, erspL7_means]), ...
+    std([erspL3_means, erspL5_means, erspL7_means]) / sqrt(length(participantIDs)), 'o-');
+xlabel('Memory Load (Letters)');
+ylabel('Baseline-Normalised Theta Power');
+title('Theta Power Across Memory Loads');
+saveas(gcf, fullfile(outputFolder, 'theta_power_memory_loads.png'));
+
+
+
+
+
+
+
+
+
+%{
+for i = 1:length(matchedFiles)
+    fprintf('Processing Participant %d: %s -> %s\n', i, matchedFiles(i).memoriseFile, matchedFiles(i).fixationFile);
     participantIDs{end+1} = matchedFiles(i).memoriseFile;
 
     % Load memorise and fixation files
@@ -128,7 +316,7 @@ for i = 1:length(matchedFiles)
             % Compute Euclidean distance to ACC
             distances(ic) = norm(dipole.posxyz - accCoords);
     
-            % Safeguard against invalid indexing
+            % Safeguard against invalid indexingthetaBand
             if ic > size(EEG_memorise.icaact, 1)
                 warning('Skipping IC%d: Index exceeds available ICs in icaact.', ic);
                 distances(ic) = Inf;
@@ -333,6 +521,10 @@ disp(ranovaResults);
 %% Save ANOVA Results
 save(fullfile(outputFolder, 'theta_power_memory_results.mat'), 'thetaPowerMatrix', 'ranovaResults');
 disp('ANOVA results saved.');
+%}
+
+
+
 
 
 %% Utility Functions
@@ -405,7 +597,7 @@ function EEG = performDipfit(EEG)
     cfg.verbose = 'no';  % Suppress verbose output
     
     % Perform the fitting
-    evalc('EEG = pop_multifit(EEG, 1:size(EEG.icaweights, 1), ''threshold'', 100, ''dipplot'', ''off'');');
+    evalc('EEG = pop_multifit(EEG, 1:size(EEG.icaweights, 1), ''threshold'', 15, ''plotopt'', {''normlen'' ''on''});');
 end
 
 
@@ -420,4 +612,101 @@ function candidateICs = findComponentsNearACC(EEG) % Finds dipoles in ACC using 
             candidateICs = [candidateICs, ic];
         end
     end
+end
+
+
+% FUNCTIONS
+function [ersp, times, freqs] = compute_ersp_epochs(EEG_memorise, freqs)
+    [ersp_test, times_test, freqs_test] = newtimef(test_chunk, EEG_memorise.pnts, ...
+        [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, EEG_memorise.srate, [3 0.5], ...
+        'baseline', [], 'trialbase', 'off', 'freqs', freqs);
+end
+
+%{
+    % Define chunk size based on memory limitations
+    max_trials_per_chunk = 50; % Process 50 trials at a time (adjust based on available memory)
+    num_trials = size(EEG_memorise.data, 3);
+    num_chunks = ceil(num_trials / max_trials_per_chunk);
+
+    % Preallocate arrays for concatenating results
+    ersp_all = [];
+    times_all = [];
+    freqs_all = [];
+
+    % Iterate over chunks of task data
+    for chunk_idx = 1:num_chunks
+        % Define the range of trials for this chunk
+        trial_start = (chunk_idx - 1) * max_trials_per_chunk + 1;
+        trial_end = min(chunk_idx * max_trials_per_chunk, num_trials);
+
+        % Extract chunk of trials
+        data_chunk = EEG_memorise.data(:, :, trial_start:trial_end);
+
+        % Compute ERSP for task data chunk without built-in baseline correction
+        [ersp_chunk, times, freqs] = newtimef(data_chunk, EEG_memorise.pnts, ...
+            [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, EEG_memorise.srate, [3 0.5], ...
+            'baseline', [], 'trialbase', 'off', ...
+            'freqs', freqs, 'nfreqs', length(freqs), 'freqscale', 'linear', ...
+            'basenorm', 'off', 'plotitc', 'off', 'plotersp', 'off', ...
+            'padratio', 2);
+
+        % Concatenate results across chunks
+        if chunk_idx == 1
+            % Initialise time and frequency axes on first iteration
+            times_all = times;
+            freqs_all = freqs;
+        end
+        ersp_all = cat(4, ersp_all, ersp_chunk);
+    end
+
+    % Combine results into single output
+    ersp = mean(ersp_all, 4); % Average across trials
+    times = times_all;
+    freqs = freqs_all;
+end
+%}
+
+function ersp_baseline = compute_ersp_baseline(EEG_fixation, freqs)
+    % Validate frequencies
+    if any(freqs <= 0)
+        error('Invalid frequencies in `freqs`. Frequencies must be positive: %s', mat2str(freqs));
+    end
+
+    % Update frequencies to avoid very low values
+    freqs = [4 30]; % Avoid very low frequencies (adjust as needed)
+
+    % Get dimensions of the fixation data
+    [num_channels, num_points, num_trials] = size(EEG_fixation.data);
+
+    % Debugging output for freqs and num_points
+    fprintf('Debug: num_points = %d, freqs = [%g %g]\n', num_points, freqs(1), freqs(end));
+
+    % Use fixed cycles for simplicity
+    cycles = 3;
+
+    % Preallocate array to store baseline ERSP for each trial
+    baselineERSP_all = zeros(length(freqs), num_points, num_trials);
+
+    % Iterate over each fixation trial
+    for trial_idx = 1:num_trials
+        % Extract data for the current trial
+        trial_data = EEG_fixation.data(:, :, trial_idx);
+
+        % Compute baseline ERSP for the current trial
+        [baselineERSP, ~, ~, ~, ~] = ...
+            newtimef(trial_data, num_points, ...
+                     [EEG_fixation.xmin EEG_fixation.xmax] * 1000, ...
+                     EEG_fixation.srate, cycles, ... % Use fixed cycles
+                     'winsize', 0, ... % Automatically determine window size
+                     'baseline', NaN, 'plotitc', 'off', 'plotersp', 'off', ...
+                     'freqs', freqs, 'freqscale', 'linear', 'padratio', 2, ...
+                     'wletmethod', 'dftfilt2', ... % Use simpler wavelet method
+                     'verbose', 'on');
+
+        % Store the result
+        baselineERSP_all(:, :, trial_idx) = baselineERSP;
+    end
+
+    % Average across trials to get the final baseline ERSP
+    ersp_baseline = mean(baselineERSP_all, 3);
 end
