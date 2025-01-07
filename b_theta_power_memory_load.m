@@ -89,18 +89,225 @@ for i = 1:length(matchedFiles)
 
     %% Step A1: Compute ERSPs for Memorise Epochs (Baseline-Normalised)
     fprintf('Computing ERSPs for memorise epochs...\n');
-    ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
-
+    ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise);
     fprintf('Baseline normalisation complete.\n');
 
 
     %% Step A2: ERSP Decomposition and Template Matching
     fprintf('Performing ERSP decomposition...\n');
-    % Perform PCA to reduce dimensionality
-    [pca_coeff, pca_scores] = pca(reshape(ERSP_baseline_norm, [], size(ERSP_baseline_norm, 3)));
 
-    % Perform ICA to extract independent time-frequency templates
+    % Dimensions of ERSP_baseline_norm: [channels x frequencies x time points]
+    [num_channels, num_frequencies, num_time_points] = size(ERSP_baseline_norm);
+    fprintf('Debug: ERSP dimensions - Channels: %d, Frequencies: %d, Time Points: %d\n', ...
+        num_channels, num_frequencies, num_time_points);
+    
+    % Reshape ERSP to isolate the time dimension for PCA
+    reshaped_for_time_PCA = permute(ERSP_baseline_norm, [2, 3, 1]); % [frequencies x time points x channels]
+    reshaped_for_time_PCA = reshape(reshaped_for_time_PCA, num_frequencies * num_time_points, num_channels); % [frequencies*time points x channels]
+    
+    % Debug reshaping
+    fprintf('Debug: Reshaped ERSP for PCA across time - Dimensions: [%d x %d]\n', ...
+        size(reshaped_for_time_PCA, 1), size(reshaped_for_time_PCA, 2));
+    
+    % Perform PCA across time for each frequency
+    fprintf('Performing PCA across time for each frequency...\n');
+    [pca_coeff_time, pca_scores_time, latent_time] = pca(reshaped_for_time_PCA);
+    
+    % Retain only the top components that explain the most variance
+    explained_variance_threshold = 85; % Retain components explaining 85% variance
+    cumulative_variance = cumsum(latent_time) / sum(latent_time) * 100;
+    num_retained_time_components = find(cumulative_variance >= explained_variance_threshold, 1);
+    
+    % Ensure at least one component is retained
+    if isempty(num_retained_time_components) || num_retained_time_components == 0
+        num_retained_time_components = size(pca_scores_time, 2); % Retain all components
+    end
+     
+    fprintf('Debug: Numer of num_retained_time_components: %d\n', num_retained_time_components);
+
+    % Adjust to ensure divisibility by num_frequencies
+    num_retained_time_components = max(1, ...
+        floor(num_retained_time_components / num_frequencies) * num_frequencies);
+    fprintf('Debug: Retaining %d components (adjusted for divisibility by %d frequencies).\n', ...
+        num_retained_time_components, num_frequencies);
+
+    fprintf('Debug: Numer of num_retained_time_components after ensuring divisibility by num_frequencies: %d\n', num_retained_time_components);
+    
+    % Truncate PCA scores and coefficients
+    pca_scores_time = pca_scores_time(:, 1:num_retained_time_components);
+    pca_coeff_time = pca_coeff_time(:, 1:num_retained_time_components);
+    
+    % Reshape PCA scores back into [frequencies x components x time points]
+    reshaped_scores_time = reshape(pca_scores_time, num_frequencies, num_retained_time_components, num_time_points);
+    
+    % Combine frequency and time dimensions for ICA
+    fprintf('Combining frequency and time dimensions for ICA...\n');
+    reshaped_for_ICA = reshape(reshaped_scores_time, num_frequencies * num_retained_time_components, num_time_points);
+    
+    fprintf('Debug: Dimensions of PCA-reduced input to ICA - [%d x %d]\n', ...
+        size(reshaped_for_ICA, 1), size(reshaped_for_ICA, 2));
+    
+    % Apply ICA on the reduced PCA dimensions
+    fprintf('Performing ICA on PCA-reduced data...\n');
+    [ica_weights, ica_templates] = runica(reshaped_for_ICA);
+    
+    % Validate ICA output dimensions
+    fprintf('Debug: ICA templates dimensions before reshaping: [%d x %d]\n', size(ica_templates, 1), size(ica_templates, 2));
+    
+    % Automatically adjust for mismatched dimensions
+    expected_elements = num_frequencies * num_retained_time_components * num_time_points;
+    actual_elements = numel(ica_templates);
+    
+    if actual_elements ~= expected_elements
+        warning('Mismatch in elements: Expected %d, but got %d. Reshaping based on actual dimensions.', ...
+            expected_elements, actual_elements);
+        % Dynamically adjust reshaping parameters
+        adjusted_num_time_points = floor(actual_elements / (num_frequencies * num_retained_time_components));
+        fprintf('Debug: Adjusted time points for reshaping: %d\n', adjusted_num_time_points);
+        num_time_points = adjusted_num_time_points; % Adjust time points dynamically
+    end
+    
+    % Reshape ICA templates
+    ica_templates_reshaped = reshape(ica_templates, num_frequencies, num_retained_time_components, num_time_points);
+    
+    % Debug reshaped dimensions
+    fprintf('Debug: ICA templates reshaped to [%d frequencies x %d components x %d time points].\n', ...
+        size(ica_templates_reshaped, 1), size(ica_templates_reshaped, 2), size(ica_templates_reshaped, 3));
+
+    %#########################
+    % Scoring Theta Components
+    theta_scores = zeros(1, size(ica_templates_reshaped, 3));
+    freq_vector = linspace(freqs(1), freqs(2), num_frequencies);
+    
+    for ic = 1:size(ica_templates_reshaped, 3)
+        % Extract ICA template from reshaped data
+        ic_template = ica_templates_reshaped(:, :, ic); % [frequencies x time_points]
+    
+        % Identify theta band indices
+        theta_indices = find(freq_vector >= thetaBand(1) & freq_vector <= thetaBand(2));
+    
+        % Compute theta power
+        theta_power = mean(ic_template(theta_indices, :), 1); % Mean across time
+        theta_scores(ic) = mean(theta_power); % Average over time
+    
+        % Debug theta computation
+        fprintf('Debug: Theta indices: %s\n', mat2str(theta_indices));
+        fprintf('Debug: Theta power for IC %d: %.4f\n', ic, theta_scores(ic));
+    end
+    
+    % Identify dominant theta template
+    [~, theta_template_idx] = max(theta_scores);
+    fprintf('Selected Theta Template Index: %d\n', theta_template_idx);
+    
+    % Spatial Validation
+    fprintf('Validating IC-to-dipole mapping...\n');
+    num_ICs = size(ica_weights, 1);
+    num_dipoles = length(EEG_memorise.dipfit.model);
+    
+    if num_ICs ~= num_dipoles
+        error('Mismatch: Number of ICs (%d) does not match number of dipoles (%d).', num_ICs, num_dipoles);
+    end
+    
+    fprintf('Performing spatial validation with DIPFIT...\n');
+    EEG_memorise = performDipfit(EEG_memorise);
+    
+    rv_threshold = 0.15; % Residual variance threshold
+    mni_constraints = [-10 10; 10 50; 10 50]; % Midline ACC constraints
+    valid_idx = validate_dipoles(EEG_memorise, rv_threshold, mni_constraints);
+    
+    fprintf('Debug: Valid indices: %s\n', mat2str(find(valid_idx)));
+    
+    % Select the fmθ Component
+    valid_theta_scores = theta_scores(valid_idx);
+    if isempty(valid_theta_scores)
+        error('No spatially valid theta components found.');
+    end
+    
+    [~, max_valid_idx] = max(valid_theta_scores);
+    fm_theta_idx = find(valid_idx); % Map to original IC indices
+    fm_theta_idx = fm_theta_idx(max_valid_idx); % Final fmθ component index
+    
+    fprintf('Selected IC %d as the fmθ component with theta score %.4f.\n', fm_theta_idx, valid_theta_scores(max_valid_idx));
+    disp("##########################")
+    %{
+    disp("##########################")
+    % Dimensions of ERSP_baseline_norm: [channels x frequencies x time points]
+    [num_channels, num_frequencies, num_time_points] = size(ERSP_baseline_norm);
+    fprintf('Debug: Calculated number of num_frequencies: [~ ~ ~] = size(ERSP_baseline_norm); %d\n', num_frequencies);
+    fprintf('Debug: Calculated number of num_channels: [~ ~ ~] = size(ERSP_baseline_norm); %d\n', num_channels);
+    fprintf('Debug: Calculated number of num_time_points: [~ ~ ~] = size(ERSP_baseline_norm); %d\n', num_time_points);
+
+    
+    % Reshape ERSP for PCA: Preserve frequency-time grid
+    reshaped_ERSP = reshape(ERSP_baseline_norm, num_channels * num_frequencies, num_time_points); % [channels*frequencies x time points]
+    fprintf('Debug: Reshaped ERSP dimensions: %s\n', mat2str(size(reshaped_ERSP)));
+    
+    total_features = num_channels * num_frequencies;
+    fprintf('Debug: total_features: %d\n', total_features);
+    if mod(total_features, num_frequencies) ~= 0
+        error('Total features must be divisible by the number of frequencies.');
+    end
+
+    fprintf('Debug: Rank of reshaped ERSP before PCA: %d\n', rank(reshaped_ERSP));
+
+   % Perform PCA without specifying NumComponents
+    [pca_coeff, pca_scores, latent] = pca(reshaped_ERSP');
+    fprintf('Debug: PCA output dimensions (coeff): %s\n', mat2str(size(pca_coeff)));
+    fprintf('Debug: PCA output dimensions (scores): %s\n', mat2str(size(pca_scores)));
+    
+    % Truncate PCA outputs to ensure divisibility
+    num_retained_components = floor(size(pca_scores, 2) / num_frequencies) * num_frequencies;
+    fprintf('Debug: Truncating PCA outputs to %d components for frequency-time mapping.\n', num_retained_components);
+    
+    pca_coeff = pca_coeff(:, 1:num_retained_components);
+    pca_scores = pca_scores(:, 1:num_retained_components);
+    
+    % Validate truncation
+    if mod(size(pca_scores, 2), num_frequencies) ~= 0
+        error('PCA outputs after truncation are not divisible by the number of frequencies.');
+    end
+
+    
+    % Perform ICA on PCA scores
     [ica_weights, ica_templates] = runica(pca_scores');
+    
+    fprintf('Debug: ICA output dimensions (weights): %s\n', mat2str(size(ica_weights)));
+    fprintf('Debug: ICA output dimensions (templates): %s\n', mat2str(size(ica_templates)));
+    
+    % Validate PCA and ICA outputs
+    if size(pca_scores, 2) ~= size(ica_templates, 2)
+        error('Mismatch: PCA scores (%d) and ICA templates (%d) must match in the reduced dimensional space.', ...
+              size(pca_scores, 2), size(ica_templates, 2));
+    end
+    fprintf('Debug: PCA/ICA outputs validated successfully.\n');
+    %}
+    % Reshape ICA templates and compute theta scores
+    theta_scores = zeros(1, size(ica_templates, 1));
+    for ic = 1:size(ica_templates, 1)
+        % Reshape IC template to frequency-time grid
+        try
+            ic_template = reshape(ica_templates(ic, :), num_frequencies, num_time_points);
+        catch ME
+            fprintf('Error reshaping IC template for IC %d: %s\n', ic, ME.message);
+            fprintf('Debug: IC template size: %s\n', mat2str(size(ica_templates(ic, :))));
+            fprintf('Debug: Target reshape dimensions: [%d, %d]\n', num_frequencies, num_time_points);
+            rethrow(ME);
+        end
+    
+        % Debug reshaped template
+        fprintf('Debug: Reshaped IC %d into [%d frequencies x %d time points].\n', ic, num_frequencies, num_time_points);
+    
+        % Extract theta power
+        theta_indices = find(freq_vector >= thetaBand(1) & freq_vector <= thetaBand(2));
+        theta_power = mean(ic_template(theta_indices, :), 1); % Mean over theta band
+    
+        % Debug theta indices and power
+        fprintf('Debug: Theta indices: %s\n', mat2str(theta_indices));
+        fprintf('Debug: Mean theta power for IC %d: %.4f\n', ic, mean(theta_power));
+    
+        theta_scores(ic) = mean(theta_power); % Average over time
+    end
+
 
     % Identify dominant theta template
     theta_template_idx = find_theta_template(ica_templates, freqs, thetaBand, false);
@@ -108,12 +315,54 @@ for i = 1:length(matchedFiles)
     fprintf('Selected Theta Template Index: %d\n', theta_template_idx);
 
     % Score each component based on alignment with the theta template
-    theta_scores = score_theta_alignment(ica_templates, theta_template_idx);
+    %theta_scores = score_theta_alignment(ica_templates, theta_template_idx);
+
+    % Score each component based on alignment with the theta template
+    theta_scores = score_theta_alignment(ica_templates, theta_template_idx, freqs, thetaBand);
     
+    % Validate IC-to-dipole Mapping %%%%%%%
+    fprintf('Validating IC-to-dipole mapping...\n');
+    fprintf('Debug: Number of ICs: %d, Number of Dipoles: %d\n', num_ICs, num_dipoles);
+    num_ICs = size(EEG_memorise.icaweights, 1);
+    num_dipoles = length(EEG_memorise.dipfit.model);
+    if num_ICs ~= num_dipoles
+        error('Mismatch: Number of ICs (%d) does not match number of dipoles (%d).', num_ICs, num_dipoles);
+    end
+    %
+
+
     % Perform Spatial Validation with DIPFIT
     fprintf('Performing spatial validation with DIPFIT...\n');
     EEG_memorise = performDipfit(EEG_memorise);
+    
+    % Validate dipoles based on spatial and residual variance criteria
+    rv_threshold = 0.15; % 15% residual variance
+    mni_constraints = [-10 10; 10 50; 10 50]; % Midline ACC constraints
+    valid_idx = validate_dipoles(EEG_memorise, rv_threshold, mni_constraints);
+    fprintf('Debug: Size of valid_idx: [%d x %d]\n', size(valid_idx));
+    fprintf('Debug: Valid indices: %s\n', mat2str(find(valid_idx)));
 
+
+    % Ensure valid_idx maps correctly to theta_scores
+    if length(valid_idx) ~= length(theta_scores)
+        error('Mismatch: Length of valid_idx (%d) does not match length of theta_scores (%d).', length(valid_idx), length(theta_scores));
+    end
+    
+    % Retain theta scores for spatially valid components
+    valid_theta_scores = theta_scores(valid_idx);
+    if isempty(valid_theta_scores)
+        error('No spatially valid theta components found.');
+    end
+    
+    % Select the fmθ Component
+    [~, max_valid_idx] = max(valid_theta_scores); % Index within valid components
+    fm_theta_idx = find(valid_idx); % Map to original IC indices
+    fm_theta_idx = fm_theta_idx(max_valid_idx); % Final fmθ component index
+    fprintf('Debug: Valid theta scores: %s\n', mat2str(valid_theta_scores));
+    fprintf('Debug: Selected IC %d as fmθ component with theta score %.4f.\n', fm_theta_idx, valid_theta_scores(max_valid_idx));
+    fprintf('Selected IC %d as the fmθ component.\n', fm_theta_idx);
+
+    %{
     % Extract dipole information
     dipole_positions = vertcat(EEG_memorise.dipfit.model.posxyz); % Dipole locations
     residual_variances = [EEG_memorise.dipfit.model.rv]; % Residual variance
@@ -134,7 +383,7 @@ for i = 1:length(matchedFiles)
     else
         error('No spatially valid fmθ component found for this participant.');
     end
-
+    %}
 
     %% Step A3: Cluster Components Across Participants
     % (This part will be implemented after processing all participants.)
@@ -809,7 +1058,7 @@ epochs, and outputs the normalized ERSP for all channels as a
         EEG_memorise.pnts, ...
         [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, ...
         EEG_memorise.srate, ...
-        [3 0.5], ...
+        [3], ... #cycles
         'baseline', baseline_mean(1), ...
         'plotersp', 'off', ...
         'plotitc', 'off' ...
@@ -830,7 +1079,7 @@ epochs, and outputs the normalized ERSP for all channels as a
             EEG_memorise.pnts, ...
             [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, ...
             EEG_memorise.srate, ...
-            [3 0.5], ...
+            [3], ... #cycles
             'baseline', baseline_mean(chan), ...
             'plotersp', 'off', ...
             'plotitc', 'off' ...
@@ -904,7 +1153,7 @@ function theta_template_idx = find_theta_template(ica_templates, freqs, thetaBan
     end
 end
 
-
+%{
 function theta_scores = score_theta_alignment(ica_templates, theta_template_idx)
     % score_theta_alignment Scores ICs based on alignment with the theta template
     %
@@ -935,5 +1184,112 @@ function theta_scores = score_theta_alignment(ica_templates, theta_template_idx)
         
         % Compute alignment score as dot product (cosine similarity)
         theta_scores(ic) = dot(theta_template_norm, ic_template_norm);
+    end
+end
+%}
+
+%{
+function theta_scores = score_theta_alignment(ica_templates, theta_template_idx, freqs, thetaBand)
+    % score_theta_alignment Scores ICs based on alignment with the theta template
+    %
+    % Inputs:
+    %   ica_templates - IC templates (num_ICs x features)
+    %   theta_template_idx - Index of the dominant theta template
+    %   freqs - Frequency vector (adjusted based on [2 30] or Onton et al.'s approach)
+    %   thetaBand - [min_theta max_theta], frequency range of the theta band
+    %
+    % Output:
+    %   theta_scores - Alignment scores for each IC
+
+    % Debug: Display inputs
+    fprintf('Debug: Number of ICs: %d\n', size(ica_templates, 1));
+    fprintf('Debug: Number of features per IC: %d\n', size(ica_templates, 2));
+    fprintf('Debug: Theta template index: %d\n', theta_template_idx);
+    fprintf('Debug: Frequency range: [%g, %g]\n', freqs(1), freqs(2));
+    fprintf('Debug: Theta band range: [%g, %g]\n', thetaBand(1), thetaBand(2));
+
+    % Validate dimensions
+    num_features = size(ica_templates, 2);
+    num_frequencies = round(sqrt(num_features));
+    num_time_points = num_features / num_frequencies;
+
+    % Debug: Validate dimensions
+    fprintf('Debug: Total features in ICA templates: %d\n', num_features);
+    fprintf('Debug: Calculated number of frequencies: %d\n', num_frequencies);
+    fprintf('Debug: Calculated number of time points: %.2f\n', num_time_points);
+
+    if round(num_time_points) ~= num_time_points
+        error('Mismatch: Frequency-time dimensions do not align with IC features.');
+    end
+
+    % Define frequency vector
+    freq_vector = linspace(freqs(1), freqs(2), num_frequencies);
+
+    % Debug: Validate frequency vector
+    fprintf('Debug: Frequency vector: %s\n', mat2str(freq_vector));
+
+    % Identify theta band indices
+    theta_indices = find(freq_vector >= thetaBand(1) & freq_vector <= thetaBand(2));
+    fprintf('Debug: Theta band indices: %s\n', mat2str(theta_indices));
+
+    % Extract and normalise theta template
+    theta_template = ica_templates(theta_template_idx, :);
+    theta_template_norm = theta_template / norm(theta_template);
+
+    % Calculate theta scores
+    theta_scores = zeros(1, size(ica_templates, 1));
+    for ic = 1:size(ica_templates, 1)
+        % Reshape IC template
+        try
+            ic_template = reshape(ica_templates(ic, :), num_frequencies, num_time_points);
+        catch ME
+            fprintf('Error reshaping IC template for IC %d: %s\n', ic, ME.message);
+            rethrow(ME);
+        end
+
+        % Debug: Validate reshaped template
+        fprintf('Debug: Reshaped IC template %d into [%d frequencies x %d time points].\n', ic, num_frequencies, num_time_points);
+
+        % Extract theta band power
+        theta_power = mean(ic_template(theta_indices, :), 1);
+        theta_scores(ic) = mean(theta_power);
+
+        % Debug: Display theta power and score for this IC
+        fprintf('Debug: IC %d, Mean theta power: %.4f, Theta score: %.4f\n', ic, mean(theta_power), theta_scores(ic));
+    end
+end
+%}
+
+function theta_scores = score_theta_alignment(ica_templates, theta_template_idx, freqs, thetaBand)
+    % score_theta_alignment Scores ICs based on alignment with the theta template
+    %
+    % Inputs:
+    %   ica_templates - IC templates (num_ICs x features)
+    %   theta_template_idx - Index of the dominant theta template
+    %   freqs - Frequency vector (based on original ERSP dimensions)
+    %   thetaBand - [min_theta max_theta], frequency range of the theta band
+
+    % Recreate frequency vector based on the original ERSP dimensions
+    num_features = size(ica_templates, 2);
+    freq_vector = linspace(freqs(1), freqs(2), num_features);
+
+    % Identify indices corresponding to the theta band
+    theta_indices = find(freq_vector >= thetaBand(1) & freq_vector <= thetaBand(2));
+    fprintf('Debug: Theta band indices: %s\n', mat2str(theta_indices));
+
+    % Extract and normalise theta template
+    theta_template = ica_templates(theta_template_idx, :);
+    theta_template_norm = theta_template / norm(theta_template);
+
+    % Calculate theta scores
+    num_ICs = size(ica_templates, 1);
+    theta_scores = zeros(1, num_ICs);
+    for ic = 1:num_ICs
+        % Extract IC template
+        ic_template = ica_templates(ic, :);
+        ic_template_norm = ic_template / norm(ic_template);
+
+        % Compute theta alignment as dot product (cosine similarity)
+        theta_scores(ic) = dot(theta_template_norm(theta_indices), ic_template_norm(theta_indices));
     end
 end
