@@ -103,7 +103,9 @@ for i = 1:length(matchedFiles)
     [ica_weights, ica_templates] = runica(pca_scores');
 
     % Identify dominant theta template
-    theta_template_idx = find_theta_template(ica_templates, freqs, thetaBand);
+    theta_template_idx = find_theta_template(ica_templates, freqs, thetaBand, false);
+    % Debugging: Display identified template index
+    fprintf('Selected Theta Template Index: %d\n', theta_template_idx);
 
     % Score each component based on alignment with the theta template
     theta_scores = score_theta_alignment(ica_templates, theta_template_idx);
@@ -840,4 +842,98 @@ epochs, and outputs the normalized ERSP for all channels as a
 
     % Return baseline-normalised ERSP
     ERSP_baseline_norm = ersp_all_channels;
+end
+
+
+function theta_template_idx = find_theta_template(ica_templates, freqs, thetaBand, visualise)
+    % find_theta_template Identifies the dominant theta template (5-7 Hz) from ICA templates
+    %
+    % Inputs:
+    %   ica_templates - Independent components (ICs), size: [num_ICs x features]
+    %   freqs - [min_freq max_freq], frequency range of the decomposition
+    %   thetaBand - [min_theta max_theta], frequency range of the theta band
+    %   visualise - Boolean, whether to visualise the dominant theta template
+    %
+    % Output:
+    %   theta_template_idx - Index of the IC with dominant theta activity (5-7 Hz)
+    
+    % Compute the dimensions of the frequency and time axes
+    num_freqs = length(freqs); % Use provided frequency vector length
+    num_times = size(ica_templates, 2) / num_freqs; % Derive time dimension
+
+    % Check validity of reshaping
+    if round(num_times) ~= num_times
+        error('Frequency-time features do not align with the frequency vector length.');
+    end
+
+    % Compute the frequency vector
+    freq_vector = linspace(freqs(1), freqs(2), num_freqs);
+    
+    % Identify indices corresponding to the theta band
+    theta_range = find(freq_vector >= thetaBand(1) & freq_vector <= thetaBand(2));
+    
+    % Initialise theta scores for each IC
+    num_ICs = size(ica_templates, 1);
+    theta_scores = zeros(1, num_ICs);
+
+    % Loop through each IC
+    for ic = 1:num_ICs
+        % Reshape IC template back to frequency-time representation
+        ic_template = reshape(ica_templates(ic, :), num_freqs, num_times);
+        
+        % Extract power in the theta band
+        theta_power = mean(ic_template(theta_range, :), 1); % Mean over theta frequencies
+        theta_scores(ic) = mean(theta_power); % Average over time
+    end
+
+    % Identify the IC with the maximum theta score
+    [~, theta_template_idx] = max(theta_scores);
+
+    % Visualise the dominant theta template if requested
+    if visualise
+        dominant_theta_template = reshape(ica_templates(theta_template_idx, :), num_freqs, num_freqs);
+        times = linspace(0, 1, num_freqs); % Example time vector (adjust as needed)
+        
+        figure;
+        imagesc(times, freq_vector, dominant_theta_template);
+        axis xy;
+        colorbar;
+        title('Dominant Theta Template (5–7 Hz)');
+        xlabel('Time (s)');
+        ylabel('Frequency (Hz)');
+    end
+end
+
+
+function theta_scores = score_theta_alignment(ica_templates, theta_template_idx)
+    % score_theta_alignment Scores ICs based on alignment with the theta template
+    %
+    % Inputs:
+    %   ica_templates - Independent components (ICs), size: [num_ICs x features]
+    %   theta_template_idx - Index of the theta template
+    %
+    % Output:
+    %   theta_scores - Alignment scores for each IC
+    
+    % Extract the theta template
+    theta_template = ica_templates(theta_template_idx, :);
+    
+    % Normalise the theta template for alignment comparison
+    theta_template_norm = theta_template / norm(theta_template);
+    
+    % Initialise scores for each IC
+    num_ICs = size(ica_templates, 1);
+    theta_scores = zeros(1, num_ICs);
+    
+    % Loop through each IC and compute alignment score
+    for ic = 1:num_ICs
+        % Extract current IC template
+        ic_template = ica_templates(ic, :);
+        
+        % Normalise the IC template
+        ic_template_norm = ic_template / norm(ic_template);
+        
+        % Compute alignment score as dot product (cosine similarity)
+        theta_scores(ic) = dot(theta_template_norm, ic_template_norm);
+    end
 end
