@@ -53,6 +53,7 @@ erspL5_means = [];
 erspL7_means = [];
 
 
+
 % Load Memorise and Fixation Epochs
 memoriseFiles = dir(fullfile(memoriseEpochFolder, '*_memorise.set'));
 fixationFiles = dir(fullfile(fixationEpochFolder, '*_fixation.set'));
@@ -114,7 +115,7 @@ for i = 1:length(matchedFiles)
     [pca_coeff_time, pca_scores_time, latent_time] = pca(reshaped_for_time_PCA);
     
     % Retain only the top components that explain the most variance
-    explained_variance_threshold = 85; % Retain components explaining 85% variance
+    explained_variance_threshold = 85; % Retain components explaining 85% variance  % TO DO TEST WITH 99
     cumulative_variance = cumsum(latent_time) / sum(latent_time) * 100;
     num_retained_time_components = find(cumulative_variance >= explained_variance_threshold, 1);
     
@@ -174,7 +175,6 @@ for i = 1:length(matchedFiles)
     fprintf('Debug: ICA templates reshaped to [%d frequencies x %d components x %d time points].\n', ...
         size(ica_templates_reshaped, 1), size(ica_templates_reshaped, 2), size(ica_templates_reshaped, 3));
 
-    %#########################
     % Scoring Theta Components
     theta_scores = zeros(1, size(ica_templates_reshaped, 3));
     freq_vector = linspace(freqs(1), freqs(2), num_frequencies);
@@ -207,59 +207,63 @@ for i = 1:length(matchedFiles)
     num_ICs = size(ica_weights, 1);
     num_dipoles = length(EEG_memorise.dipfit.model);
     
-    if num_ICs ~= num_dipoles
-        fprintf('Mismatch: Number of ICs (%d) does not match number of dipoles (%d).', num_ICs, num_dipoles);
-    end
+   if num_ICs ~= num_dipoles
+        warning('Mismatch: Number of ICs (%d) does not match number of dipoles (%d). Adjusting to the smaller count.', ...
+            num_ICs, num_dipoles);
+        num_dipoles = min(num_ICs, num_dipoles);
+   end
 
     % Validate dipoles based on spatial and residual variance criteria
     rv_threshold = 0.15; % 15% residual variance
     mni_constraints = [-10 10; 10 50; 10 50]; % Midline ACC constraints
-    valid_idx = validate_dipoles(EEG_memorise, rv_threshold, mni_constraints); % REPLACE WITH findComponentsNearACC
-    fprintf('Debug: Size of valid_idx: [%d x %d]\n', size(valid_idx));
-    fprintf('Debug: Valid indices: %s\n', mat2str(find(valid_idx)));
+    acc_centroid = [-5, 20, 25];
+    [valid_idx, distances] = validate_dipoles(EEG_memorise, rv_threshold, mni_constraints, acc_centroid);
 
+    % Debug output
+    fprintf('Valid dipole indices: %s\n', mat2str(find(valid_idx)));
+    fprintf('Distances from ACC centroid: %s\n', mat2str(distances));
+    
 
-    % Ensure valid_idx maps correctly to theta_scores
+    % Adjust valid_idx length to match theta_scores
     if length(valid_idx) ~= length(theta_scores)
-        fprintf('Mismatch: Length of valid_idx (%d) does not match length of theta_scores (%d).', length(valid_idx), length(theta_scores));
+        warning('Adjusting valid_idx length to match theta_scores...');
+        valid_idx = valid_idx(1:min(length(valid_idx), length(theta_scores))); % Trim to match theta_scores
     end
-    
-    % Retain theta scores for spatially valid components
-    valid_theta_scores = theta_scores(valid_idx);
-    if isempty(valid_theta_scores)
-        error('No spatially valid theta components found.');
-    end
-    
-    % Select the fmθ Component
-    [~, max_valid_idx] = max(valid_theta_scores); % Index within valid components
-    fm_theta_idx = find(valid_idx); % Map to original IC indices
-    fm_theta_idx = fm_theta_idx(max_valid_idx); % Final fmθ component index
-    fprintf('Debug: Valid theta scores: %s\n', mat2str(valid_theta_scores));
-    fprintf('Debug: Selected IC %d as fmθ component with theta score %.4f.\n', fm_theta_idx, valid_theta_scores(max_valid_idx));
-    fprintf('Selected IC %d as the fmθ component.\n', fm_theta_idx);
+    fprintf('Debug: Adjusted valid indices: %s\n', mat2str(find(valid_idx)));
 
-    %{
-    % Extract dipole information
-    dipole_positions = vertcat(EEG_memorise.dipfit.model.posxyz); % Dipole locations
-    residual_variances = [EEG_memorise.dipfit.model.rv]; % Residual variance
     
-    % Filter ICs by spatial validity
-    valid_idx = (dipole_positions(:, 2) > 0) & (residual_variances <= 0.15); % Anterior and valid dipoles
+    % Check if any dipoles are valid
+    if any(valid_idx)
+        % Retain theta scores for spatially valid components
+        valid_theta_scores = theta_scores(valid_idx);
+        valid_indices = find(valid_idx);
     
-    % Retain theta scores for spatially valid components
-    valid_theta_scores = theta_scores(valid_idx);
-    
-    % Select the fmθ Component
-    if ~isempty(valid_theta_scores)
-        % Find the spatially valid IC with the highest theta score
-        [~, max_valid_idx] = max(valid_theta_scores); % Index within valid components
-        fm_theta_idx = find(valid_idx); % Map to original IC indices
-        fm_theta_idx = fm_theta_idx(max_valid_idx); % Final fmθ component index
-        fprintf('Selected IC %d as the fmθ component.\n', fm_theta_idx);
+        % Select the dipole with the maximum absoulte theta score
+        [~, max_valid_idx] = max(abs(valid_theta_scores));
+        fm_theta_idx = valid_indices(max_valid_idx);
+        fprintf('Selected valid dipole (Index: %d) with max theta score: %.4f.\n', ...
+            fm_theta_idx, theta_scores(fm_theta_idx));
     else
-        error('No spatially valid fmθ component found for this participant.');
+        % No valid dipoles, use closest based on distance
+        fprintf('No valid dipoles found. Using fallback based on distance to ACC centroid.\n');
+    
+        % Find top 5 closest dipoles
+        [~, sorted_indices] = sort(distances);
+        top_5_closest = sorted_indices(1:min(5, length(sorted_indices)));
+    
+        % Retrieve theta scores for the closest dipoles
+        closest_theta_scores = theta_scores(top_5_closest);
+    
+        % Select the dipole with the maximum absoulte theta score among the closest
+        [~, max_closest_idx] = max(abs(closest_theta_scores));
+        fm_theta_idx = top_5_closest(max_closest_idx);
+        fprintf('Selected fallback dipole (Index: %d) with max theta score: %.4f (Distance: %.2f mm).\n', ...
+            fm_theta_idx, theta_scores(fm_theta_idx), distances(fm_theta_idx));
     end
-    %}
+    
+    % Final selected dipole index
+    fprintf('Final selected dipole index: %d\n', fm_theta_idx);
+
 
     %% Step A3: Cluster Components Across Participants
     % (This part will be implemented after processing all participants.)
@@ -267,20 +271,92 @@ for i = 1:length(matchedFiles)
 
     %% Step B1: Extract Component Activity
     fprintf('Extracting component activity for fmθ...\n');
-    fm_theta_activity = extract_component_activity(EEG_memorise, fm_theta_idx);
+    % Ensure ICA activations
+    EEG_memorise = ensureICAActivations(EEG_memorise);
+
+    % Extract the time series activity for the identified fmθ component
+    fm_theta_activity = EEG_memorise.icaact(fm_theta_idx, :, :); % Dimensions: [1 x time points x epochs]
+
+    % Reshape the activity into [time points x epochs]
+    fm_theta_activity = squeeze(fm_theta_activity); % Dimensions: [time points x epochs]
+    fprintf('fmθ component activity extracted with dimensions: [%d x %d]\n', size(fm_theta_activity, 1), size(fm_theta_activity, 2));
 
     %% Step B2: Separate Epochs by Memory Load
     fprintf('Separating epochs by memory load...\n');
-    memorise_by_load = split_by_eventtype(EEG_memorise, memoryLoads);
-    fixation_by_load = split_fixation_cycles(EEG_fixation, memoryLoads);
+    fprintf('Separating memorise epochs by memory load...\n');
 
+    % Preallocate containers for memory load subsets
+    memorise_by_load = cell(1, length(memoryLoads)); % memoryLoads = [3, 5, 7]
+    
+    % Loop through epochs to sort by memory load
+    for e = 1:length(EEG_memorise.epoch)
+        % Extract the first event type string
+        load_type_str = EEG_memorise.epoch(e).eventtype{1}; % Get the first cell element
+    
+        % Extract the numeric prefix from the event type string
+        if startsWith(load_type_str, 's')
+            load_type = str2double(load_type_str(2)); % Extract the first digit after 's'
+        else
+            warning('Event type %s does not start with "s". Skipping epoch %d.', load_type_str, e);
+            continue;
+        end
+    
+        % Match the extracted load type to memoryLoads
+        load_idx = find(memoryLoads == load_type, 1);
+        if ~isempty(load_idx)
+            memorise_by_load{load_idx} = [memorise_by_load{load_idx}, e];
+        else
+            warning('Unknown memory load type in epoch %d: %s', e, load_type_str);
+        end
+    end
+    fprintf('Memorise epochs split into memory load conditions.\n');
+    
+    fprintf('Assigning fixation epochs cyclically by memory load...\n');
+    
+    % Preallocate containers for fixation load subsets
+    fixation_by_load = cell(1, length(memoryLoads));
+    for e = 1:length(EEG_fixation.epoch)
+        load_idx = mod(e - 1, length(memoryLoads)) + 1; % Cyclic assignment
+        fixation_by_load{load_idx} = [fixation_by_load{load_idx}, e];
+    end
+    fprintf('Fixation epochs assigned cyclically to memory load conditions.\n');
+
+ 
     %% Step B3: Calculate Theta Power
     fprintf('Calculating theta power...\n');
-    theta_power_memorise = compute_theta_power(fm_theta_activity, memorise_by_load, thetaBand, freqs);
-    theta_power_fixation = compute_theta_power(fm_theta_activity, fixation_by_load, thetaBand, freqs);
+
+    % Function to compute theta power for a set of epochs
+    compute_power = @(activity, epochs, theta_band, srate) arrayfun(@(e) ...
+        mean(mean(abs(fft(activity(:, e), [], 1)).^2, 1)), epochs);
+    
+    % Calculate theta power for memorise epochs
+    theta_power_memorise = cellfun(@(epochs) ...
+        compute_power(fm_theta_activity, epochs, thetaBand, EEG_memorise.srate), ...
+        memorise_by_load, 'UniformOutput', false);
+    
+    % Calculate theta power for fixation epochs
+    theta_power_fixation = cellfun(@(epochs) ...
+        compute_power(fm_theta_activity, epochs, thetaBand, EEG_fixation.srate), ...
+        fixation_by_load, 'UniformOutput', false);
 
     % Aggregate theta power
-    mean_theta_power = aggregate_theta_power(theta_power_memorise, theta_power_fixation);
+    fprintf('Aggregating and baseline-normalising theta power...\n');
+    % Preallocate for mean theta power
+    mean_theta_power = zeros(1, length(memoryLoads));
+    
+    % Loop through memory load conditions
+    for i = 1:length(memoryLoads)
+        % Aggregate mean theta power for memorise and fixation epochs
+        mean_memorise_power = mean(theta_power_memorise{i});
+        mean_fixation_power = mean(theta_power_fixation{i});
+    
+        % Baseline-normalise memorise power
+        mean_theta_power(i) = mean_memorise_power - mean_fixation_power;
+    
+        % Debug output
+        fprintf('Load %d: Mean memorise theta power = %.4f, Mean fixation theta power = %.4f, Normalised = %.4f\n', ...
+            memoryLoads(i), mean_memorise_power, mean_fixation_power, mean_theta_power(i));
+    end
 
     %% Save Participant-Level Data
     csvData = [csvData; mean_theta_power]; % Append to CSV data
@@ -302,7 +378,10 @@ for i = 1:length(participantIDs)
     EEG = pop_loadset('filename', matchedFiles(i).memoriseFile, 'filepath', memoriseEpochFolder);
     
     % Perform dipole fitting for the fmθ component
-    EEG = pop_dipfit_settings(EEG, 'model', 'spherical', 'coord_transform', [0 0 0], 'electrodes', 'on');
+    EEG = pop_dipfit_settings(EEG, 'hdmfile', 'standard_BEM/standard_vol.mat', ...
+        'mrifile', 'standard_BEM/standard_mri.mat', ...
+        'chanfile', 'standard_BEM/elec/standard_1005.elc', ...
+        'coordformat', 'MNI');
     EEG = pop_multifit(EEG, fm_theta_idx(i), 'threshold', 15, 'plotopt', {'normlen' 'on'});
     
     % Extract dipole position for the fmθ component
@@ -643,8 +722,12 @@ disp('ANOVA results saved.');
 function EEG = ensureICAActivations(EEG)
     % Compute ICA activations if missing
     if isempty(EEG.icaact)
+        fprintf('Computing ICA activations...\n');
+        % Reshape data into 2D (channels x samples)
         reshapedData = reshape(EEG.data, size(EEG.data, 1), []);
+        % Compute ICA activations
         icaActTemp = EEG.icaweights * EEG.icasphere * reshapedData;
+        % Reshape activations back to 3D (components x time points x epochs)
         EEG.icaact = reshape(icaActTemp, size(EEG.icaweights, 1), EEG.pnts, EEG.trials);
         disp('ICA activations computed.');
     end
@@ -687,14 +770,6 @@ function thetaPower = computeThetaPower(EEG_task, EEG_fixation, thetaBand, candi
 end
 
 
-%{
-function EEG = performDipfit(EEG)
-    EEG = pop_dipfit_settings(EEG, 'hdmfile', 'standard_BEM/standard_vol.mat', ...
-        'mrifile', 'standard_BEM/standard_mri.mat', 'chanfile', ...
-        'standard_BEM/elec/standard_1005.elc', 'coordformat', 'MNI');
-    EEG = pop_multifit(EEG, 1:size(EEG.icaweights, 1), 'threshold', 100, 'dipplot', 'off');
-end
-%}
 
 function EEG = performDipfit(EEG)
     % Configure DIPFIT settings
@@ -726,183 +801,6 @@ function candidateICs = findComponentsNearACC(EEG) % Finds dipoles in ACC using 
     end
 end
 
-
-% FUNCTIONS
-function [ersp, times, freqs] = compute_ersp_epochs(EEG_memorise, freqs)
-    [ersp_test, times_test, freqs_test] = newtimef(test_chunk, EEG_memorise.pnts, ...
-        [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, EEG_memorise.srate, [3 0.5], ...
-        'baseline', [], 'trialbase', 'off', 'freqs', freqs);
-end
-
-%{
-    % Define chunk size based on memory limitations
-    max_trials_per_chunk = 50; % Process 50 trials at a time (adjust based on available memory)
-    num_trials = size(EEG_memorise.data, 3);
-    num_chunks = ceil(num_trials / max_trials_per_chunk);
-
-    % Preallocate arrays for concatenating results
-    ersp_all = [];
-    times_all = [];
-    freqs_all = [];
-
-    % Iterate over chunks of task data
-    for chunk_idx = 1:num_chunks
-        % Define the range of trials for this chunk
-        trial_start = (chunk_idx - 1) * max_trials_per_chunk + 1;
-        trial_end = min(chunk_idx * max_trials_per_chunk, num_trials);
-
-        % Extract chunk of trials
-        data_chunk = EEG_memorise.data(:, :, trial_start:trial_end);
-
-        % Compute ERSP for task data chunk without built-in baseline correction
-        [ersp_chunk, times, freqs] = newtimef(data_chunk, EEG_memorise.pnts, ...
-            [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, EEG_memorise.srate, [3 0.5], ...
-            'baseline', [], 'trialbase', 'off', ...
-            'freqs', freqs, 'nfreqs', length(freqs), 'freqscale', 'linear', ...
-            'basenorm', 'off', 'plotitc', 'off', 'plotersp', 'off', ...
-            'padratio', 2);
-
-        % Concatenate results across chunks
-        if chunk_idx == 1
-            % Initialise time and frequency axes on first iteration
-            times_all = times;
-            freqs_all = freqs;
-        end
-        ersp_all = cat(4, ersp_all, ersp_chunk);
-    end
-
-    % Combine results into single output
-    ersp = mean(ersp_all, 4); % Average across trials
-    times = times_all;
-    freqs = freqs_all;
-end
-%}
-
-%{
-function ersp_baseline = compute_ersp_baseline(EEG_fixation, freqs)
-    % Validate frequencies
-    if any(freqs <= 0)
-        error('Invalid frequencies in `freqs`. Frequencies must be positive: %s', mat2str(freqs));
-    end
-
-    % Update frequencies to avoid very low values
-    freqs = [4 30]; 
-    % Use fixed cycles for simplicity
-    cycles = [5];
-
-    % Debugging: Output key parameters
-    fprintf('Debug: freqs = [%g %g], cycles = %d\n', freqs(1), freqs(end), cycles);
-
-    
-    % Get dimensions of the fixation data
-    [num_channels, num_points, num_trials] = size(EEG_fixation.data);
-
-    
-    % Debugging
-    fprintf('Debug: `winsize` = %g, num_points = %d\n', winsize, num_points);
-
-    % Safety check: Ensure `winsize` is valid
-    if winsize >= num_points
-        error('Invalid `winsize`: Must be less than the number of points in the epoch.');
-    end
-    
-
-    % Preallocate array to store baseline ERSP for each trial
-    baselineERSP_all = zeros(length(freqs), num_points, num_trials);
-
-    % Iterate over each fixation trial
-    for trial_idx = 1:num_trials
-        % Extract data for the current trial
-        trial_data = EEG_fixation.data(:, :, trial_idx);
-
-        % Compute baseline ERSP for the current trial
-        [baselineERSP, ~, ~, ~, ~] = ...
-            newtimef(trial_data, num_points, ...
-                     [EEG_fixation.xmin EEG_fixation.xmax] * 1000, ...
-                     EEG_fixation.srate, cycles, ... % Use fixed cycles
-                     'baseline', NaN, 'plotitc', 'off', 'plotersp', 'off', ...
-                     'freqs', freqs, 'freqscale', 'linear', 'padratio', 2, ...
-                     'verbose', 'on');
-
-        % Store the result
-        baselineERSP_all(:, :, trial_idx) = baselineERSP;
-    end
-
-    % Average across trials to get the final baseline ERSP
-    ersp_baseline = mean(baselineERSP_all, 3);
-end
-
-function ersp_baseline = compute_ersp_baseline(EEG_fixation, freqs)
-    % Validate frequencies
-    if any(freqs <= 0)
-        error('Invalid frequencies in `freqs`. Frequencies must be positive: %s', mat2str(freqs));
-    end
-
-    % Define chunk size based on memory limitations
-    max_trials_per_chunk = 50; % Process 50 trials at a time (adjust based on available memory)
-    num_trials = size(EEG_fixation.data, 3);
-    num_chunks = ceil(num_trials / max_trials_per_chunk);
-
-    % Preallocate arrays for concatenating results
-    ersp_all = [];
-    times_all = [];
-    freqs_all = [];
-
-    % Iterate over chunks of task data
-    for chunk_idx = 1:num_chunks
-        % Define the range of trials for this chunk
-        trial_start = (chunk_idx - 1) * max_trials_per_chunk + 1;
-        trial_end = min(chunk_idx * max_trials_per_chunk, num_trials);
-
-        % Extract chunk of trials
-        data_chunk = EEG_fixation.data(:, :, trial_start:trial_end);
-
-        % Debugging: print the size of data_chunk
-        fprintf('Processing chunk %d/%d: Trials %d to %d\n', ...
-                chunk_idx, num_chunks, trial_start, trial_end);
-        fprintf('Data chunk size: %s\n', mat2str(size(data_chunk)));
-
-        % Compute ERSP for task data chunk without baseline correction
-        try
-            [ersp_chunk, times, freqs] = newtimef(data_chunk, EEG_fixation.pnts, ...
-                [EEG_fixation.xmin, EEG_fixation.xmax] * 1000, EEG_fixation.srate, [3 0.5], ...
-                'baseline', NaN, 'trialbase', 'off', ... % Disable baseline correction explicitly
-                'freqs', freqs, 'nfreqs', length(freqs), 'freqscale', 'linear', ...
-                'basenorm', 'off', 'plotitc', 'off', 'plotersp', 'off', ...
-                'padratio', 2);
-        catch ME
-            fprintf('Error in chunk %d: %s\n', chunk_idx, ME.message);
-            rethrow(ME);
-        end
-
-        % Concatenate results across chunks
-        if chunk_idx == 1
-            % Initialise time and frequency axes on first iteration
-            times_all = times;
-            freqs_all = freqs;
-        end
-        ersp_all = cat(4, ersp_all, ersp_chunk);
-    end
-
-    % Combine results into single output
-    ersp_baseline = mean(ersp_all, 4); % Average across trials
-end
-
-
-
-
-function mean_log_power = compute_mean_log_power(EEG_fixation, freqs)
-    % Compute ERSP for fixation epochs
-    ersp_fixation = compute_ersp_baseline(EEG_fixation, freqs);
-    
-    % Compute log power
-    log_power_fixation = log(ersp_fixation);
-
-    % Compute mean log power across epochs
-    mean_log_power = mean(log_power_fixation, 3); % Average across epochs
-end
-
-%}
 
 
 function ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
@@ -1029,112 +927,7 @@ function theta_template_idx = find_theta_template(ica_templates, freqs, thetaBan
     end
 end
 
-%{
-function theta_scores = score_theta_alignment(ica_templates, theta_template_idx)
-    % score_theta_alignment Scores ICs based on alignment with the theta template
-    %
-    % Inputs:
-    %   ica_templates - Independent components (ICs), size: [num_ICs x features]
-    %   theta_template_idx - Index of the theta template
-    %
-    % Output:
-    %   theta_scores - Alignment scores for each IC
-    
-    % Extract the theta template
-    theta_template = ica_templates(theta_template_idx, :);
-    
-    % Normalise the theta template for alignment comparison
-    theta_template_norm = theta_template / norm(theta_template);
-    
-    % Initialise scores for each IC
-    num_ICs = size(ica_templates, 1);
-    theta_scores = zeros(1, num_ICs);
-    
-    % Loop through each IC and compute alignment score
-    for ic = 1:num_ICs
-        % Extract current IC template
-        ic_template = ica_templates(ic, :);
-        
-        % Normalise the IC template
-        ic_template_norm = ic_template / norm(ic_template);
-        
-        % Compute alignment score as dot product (cosine similarity)
-        theta_scores(ic) = dot(theta_template_norm, ic_template_norm);
-    end
-end
-%}
 
-%{
-function theta_scores = score_theta_alignment(ica_templates, theta_template_idx, freqs, thetaBand)
-    % score_theta_alignment Scores ICs based on alignment with the theta template
-    %
-    % Inputs:
-    %   ica_templates - IC templates (num_ICs x features)
-    %   theta_template_idx - Index of the dominant theta template
-    %   freqs - Frequency vector (adjusted based on [2 30] or Onton et al.'s approach)
-    %   thetaBand - [min_theta max_theta], frequency range of the theta band
-    %
-    % Output:
-    %   theta_scores - Alignment scores for each IC
-
-    % Debug: Display inputs
-    fprintf('Debug: Number of ICs: %d\n', size(ica_templates, 1));
-    fprintf('Debug: Number of features per IC: %d\n', size(ica_templates, 2));
-    fprintf('Debug: Theta template index: %d\n', theta_template_idx);
-    fprintf('Debug: Frequency range: [%g, %g]\n', freqs(1), freqs(2));
-    fprintf('Debug: Theta band range: [%g, %g]\n', thetaBand(1), thetaBand(2));
-
-    % Validate dimensions
-    num_features = size(ica_templates, 2);
-    num_frequencies = round(sqrt(num_features));
-    num_time_points = num_features / num_frequencies;
-
-    % Debug: Validate dimensions
-    fprintf('Debug: Total features in ICA templates: %d\n', num_features);
-    fprintf('Debug: Calculated number of frequencies: %d\n', num_frequencies);
-    fprintf('Debug: Calculated number of time points: %.2f\n', num_time_points);
-
-    if round(num_time_points) ~= num_time_points
-        error('Mismatch: Frequency-time dimensions do not align with IC features.');
-    end
-
-    % Define frequency vector
-    freq_vector = linspace(freqs(1), freqs(2), num_frequencies);
-
-    % Debug: Validate frequency vector
-    fprintf('Debug: Frequency vector: %s\n', mat2str(freq_vector));
-
-    % Identify theta band indices
-    theta_indices = find(freq_vector >= thetaBand(1) & freq_vector <= thetaBand(2));
-    fprintf('Debug: Theta band indices: %s\n', mat2str(theta_indices));
-
-    % Extract and normalise theta template
-    theta_template = ica_templates(theta_template_idx, :);
-    theta_template_norm = theta_template / norm(theta_template);
-
-    % Calculate theta scores
-    theta_scores = zeros(1, size(ica_templates, 1));
-    for ic = 1:size(ica_templates, 1)
-        % Reshape IC template
-        try
-            ic_template = reshape(ica_templates(ic, :), num_frequencies, num_time_points);
-        catch ME
-            fprintf('Error reshaping IC template for IC %d: %s\n', ic, ME.message);
-            rethrow(ME);
-        end
-
-        % Debug: Validate reshaped template
-        fprintf('Debug: Reshaped IC template %d into [%d frequencies x %d time points].\n', ic, num_frequencies, num_time_points);
-
-        % Extract theta band power
-        theta_power = mean(ic_template(theta_indices, :), 1);
-        theta_scores(ic) = mean(theta_power);
-
-        % Debug: Display theta power and score for this IC
-        fprintf('Debug: IC %d, Mean theta power: %.4f, Theta score: %.4f\n', ic, mean(theta_power), theta_scores(ic));
-    end
-end
-%}
 
 function theta_scores = score_theta_alignment(ica_templates, theta_template_idx, freqs, thetaBand)
     % score_theta_alignment Scores ICs based on alignment with the theta template
@@ -1167,5 +960,60 @@ function theta_scores = score_theta_alignment(ica_templates, theta_template_idx,
 
         % Compute theta alignment as dot product (cosine similarity)
         theta_scores(ic) = dot(theta_template_norm(theta_indices), ic_template_norm(theta_indices));
+    end
+end
+
+
+function [valid_idx, distances] = validate_dipoles(EEG, rv_threshold, mni_constraints, acc_centroid)
+    % Validate dipoles based on residual variance and MNI constraints, and calculate distances from ACC centroid
+    % Inputs:
+    %   EEG - EEG structure with dipfit model
+    %   rv_threshold - Residual variance threshold (e.g., 0.15)
+    %   mni_constraints - [X_min X_max; Y_min Y_max; Z_min Z_max] matrix defining MNI constraints
+    %   acc_centroid - [x, y, z], ACC centroid coordinates (e.g., [-5, 20, 25])
+    % Outputs:
+    %   valid_idx - Logical array indicating valid ICs (1 for valid, 0 for invalid)
+    %   distances - Array of distances from ACC centroid for all ICs
+
+    num_ICs = length(EEG.dipfit.model);
+    valid_idx = false(1, num_ICs); % Initialise all ICs as invalid
+    distances = inf(1, num_ICs); % Initialise distances array with Inf
+
+    for ic = 1:num_ICs
+        dipole = EEG.dipfit.model(ic);
+
+        % Skip invalid dipoles
+        if isempty(dipole.posxyz) || isempty(dipole.rv)
+            distances(ic) = Inf;
+            continue;
+        end
+
+        % Compute Euclidean distance from ACC centroid
+        posxyz = dipole.posxyz;
+        distances(ic) = norm(posxyz - acc_centroid);
+
+        % Check if the dipole meets residual variance threshold
+        if dipole.rv > rv_threshold
+            continue; % Skip if residual variance is too high
+        end
+
+        % Check MNI coordinate constraints
+        if posxyz(1) >= mni_constraints(1, 1) && posxyz(1) <= mni_constraints(1, 2) && ... % X-axis
+           posxyz(2) >= mni_constraints(2, 1) && posxyz(2) <= mni_constraints(2, 2) && ... % Y-axis
+           posxyz(3) >= mni_constraints(3, 1) && posxyz(3) <= mni_constraints(3, 2)       % Z-axis
+            valid_idx(ic) = true; % Mark as valid
+        end
+    end
+
+    % Debugging output for distances and valid indices
+    fprintf('Debug: Distances from ACC centroid: %s\n', mat2str(distances));
+    fprintf('Debug: Valid indices: %s\n', mat2str(find(valid_idx)));
+
+    % Handle mismatched IC and dipole counts
+    if length(valid_idx) ~= length(distances)
+        warning('Mismatch: Number of ICs (%d) does not match number of dipoles (%d). Adjusting to smaller count.', ...
+                length(valid_idx), length(distances));
+        valid_idx = valid_idx(1:min(length(valid_idx), length(distances))); % Adjust valid_idx length
+        distances = distances(1:min(length(valid_idx), length(distances))); % Adjust distances length
     end
 end
