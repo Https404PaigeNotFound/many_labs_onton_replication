@@ -32,6 +32,9 @@ addpath('utils');
 thetaBand = [5 7]; % Theta frequency range (5–7 Hz)
 memoryLoads = [3, 5, 7]; % Memory load conditions
 freqs = [2 30];
+rv_threshold = 0.15; % 15% residual variance
+mni_constraints = [-10 10; 10 50; 10 50]; % Midline ACC constraints
+acc_centroid = [-5, 20, 25];
 
 % Load Preprocessed Memorise and Fixation Epochs
 memoriseFiles = dir(fullfile(memoriseEpochFolder, '*_memorise.set'));
@@ -45,12 +48,18 @@ if length(memoriseFiles) ~= length(fixationFiles)
     error('Mismatch between number of memorise and fixation files.');
 end
 
-% Preallocate variables for CSV and ANOVA
+% Preallocate variables for CSVs and ANOVA
 csvData = [];
 participantIDs = {};
 erspL3_means = [];
 erspL5_means = [];
 erspL7_means = [];
+dipole_info = [];
+fm_theta_idx_di = [];
+fm_theta_rv_di = [];
+posX = [];
+posY = [];
+posZ = [];
 
 
 
@@ -214,9 +223,6 @@ for i = 1:length(matchedFiles)
    end
 
     % Validate dipoles based on spatial and residual variance criteria
-    rv_threshold = 0.15; % 15% residual variance
-    mni_constraints = [-10 10; 10 50; 10 50]; % Midline ACC constraints
-    acc_centroid = [-5, 20, 25];
     [valid_idx, distances] = validate_dipoles(EEG_memorise, rv_threshold, mni_constraints, acc_centroid);
 
     % Debug output
@@ -358,52 +364,40 @@ for i = 1:length(matchedFiles)
             memoryLoads(i), mean_memorise_power, mean_fixation_power, mean_theta_power(i));
     end
 
+    % Store dipole information
+    fm_theta_idx_di = [fm_theta_idx_di; fm_theta_idx];
+    fm_theta_rv_di = [fm_theta_rv_di; EEG_memorise.dipfit.model(fm_theta_idx).rv;];
+    posX = [posX, EEG_memorise.dipfit.model(fm_theta_idx).posxyz(1)]; % Extract X-coordinates
+    posY = [posY, EEG_memorise.dipfit.model(fm_theta_idx).posxyz(2)]; % Extract Y-coordinates
+    posZ = [posZ, EEG_memorise.dipfit.model(fm_theta_idx).posxyz(3)]; % Extract Z-coordinates
+        
+
+
+
+
     %% Save Participant-Level Data
     csvData = [csvData; mean_theta_power]; % Append to CSV data
     erspL3_means = [erspL3_means; mean_theta_power(1)];
     erspL5_means = [erspL5_means; mean_theta_power(2)];
     erspL7_means = [erspL7_means; mean_theta_power(3)];
+
+disp("Exiting the big loop!")
 end
 
+%{
 %% Step A3: Cluster Components Across Participants
 fprintf('Clustering fmθ components across participants...\n');
 
-% Preallocate for dipole positions
-all_dipoles = [];
-selected_fm_theta_idx = [];
-
-% Loop through participants to extract dipole positions of fmθ components
-for i = 1:length(participantIDs)
-    % Load the EEG dataset for the participant
-    EEG = pop_loadset('filename', matchedFiles(i).memoriseFile, 'filepath', memoriseEpochFolder);
-    
-    % Perform dipole fitting for the fmθ component
-    EEG = pop_dipfit_settings(EEG, 'hdmfile', 'standard_BEM/standard_vol.mat', ...
-        'mrifile', 'standard_BEM/standard_mri.mat', ...
-        'chanfile', 'standard_BEM/elec/standard_1005.elc', ...
-        'coordformat', 'MNI');
-    EEG = pop_multifit(EEG, fm_theta_idx(i), 'threshold', 15, 'plotopt', {'normlen' 'on'});
-    
-    % Extract dipole position for the fmθ component
-    dipole_pos = EEG.dipfit.model(fm_theta_idx(i)).posxyz; % Extract dipole coordinates
-    residual_var = EEG.dipfit.model(fm_theta_idx(i)).rv; % Residual variance
-
-    % Retain only valid dipoles (anterior, within residual variance threshold)
-    if residual_var <= 0.15 && dipole_pos(2) > 0 % Anterior to central sulcus
-        all_dipoles = [all_dipoles; dipole_pos]; % Append dipole coordinates
-        selected_fm_theta_idx = [selected_fm_theta_idx; i]; % Retain valid participant index
-    end
-end
+% Loop the dipole_info data?? 
 
 % Perform spatial clustering around the ACC
 fprintf('Performing spatial clustering around ACC...\n');
 
-% Define ACC centre and cluster radius
-acc_centre = [0, 30, 40]; % MNI coordinates for dorsal ACC
-cluster_radius = 20; % Radius in mm for clustering
+% Define cluster radius
+cluster_radius = 100; % Radius in mm for clustering
 
 % Compute distances from ACC centre
-distances = pdist2(all_dipoles, acc_centre);
+distances = pdist2(all_dipoles, acc_centroid);
 cluster_idx = distances < cluster_radius; % Identify dipoles within the radius
 
 % Retain components within the ACC cluster
@@ -413,6 +407,7 @@ final_participants = selected_fm_theta_idx(cluster_idx);
 % Save or visualise the final fmθ cluster
 fprintf('Final cluster includes %d components from %d participants.\n', ...
     size(final_dipoles, 1), length(final_participants));
+%}
 
 %% Export Results to CSV
 % Create a table for CSV export
@@ -423,16 +418,50 @@ csvFileName = fullfile(outputFolder, 'theta_power_memory_load.csv');
 writetable(csvTable, csvFileName);
 disp(['CSV file saved: ' csvFileName]);
 
+% Print sizes to console
+fprintf('Size of fm_theta_idx_di: [%d x %d]\n', size(fm_theta_idx_di, 1), size(fm_theta_idx_di, 2));
+fprintf('Size of fm_theta_rv_di: [%d x %d]\n', size(fm_theta_rv_di, 1), size(fm_theta_rv_di, 2));
+fprintf('Size of posX: [%d x %d]\n', size(posX, 1), size(posX, 2));
+fprintf('Size of posY: [%d x %d]\n', size(posY, 1), size(posY, 2));
+fprintf('Size of posZ: [%d x %d]\n', size(posZ, 1), size(posZ, 2));
+
+
+% Create the table
+csvTableDipole = table(participantIDs', fm_theta_idx_di', posX, posY, posZ, fm_theta_rv_di', ...
+    'VariableNames', {'ParticipantID', 'fm_theta_idx_di', 'PosX', 'PosY', 'PosZ', 'fm_theta_rv_di'});
+% Save the table as a CSV file
+csvFileName_dt = fullfile(outputFolder, 'dipole_info.csv'); % Define file path
+writetable(csvTableDipole, csvFileName_dt);
+% Display success message
+disp(['Dipole information saved as CSV: ' csvFileName_dt]);
+
+
 
 %% Step C1: Statistical Analysis
-fprintf('Performing statistical analysis...\n');
-% ANOVA to compare theta power across memory loads
-[p, tbl, stats] = anova_rm({erspL3_means, erspL5_means, erspL7_means});
-fprintf('ANOVA Results:\n');
-disp(tbl);
+% Organise data for repeated measures
+data = [erspL3_means, erspL5_means, erspL7_means]; % Combine means for all memory loads
+loadNames = {'Load3', 'Load5', 'Load7'};
+participantID = (1:size(data, 1))'; % Create participant IDs
+
+% Create table
+dataTable = array2table(data, 'VariableNames', loadNames);
+dataTable.ParticipantID = participantID;
+
+% Define within-subject factors
+withinDesign = table(loadNames', 'VariableNames', {'MemoryLoad'});
+
+% Fit repeated measures model
+rm = fitrm(dataTable, 'Load3-Load7~1', 'WithinDesign', withinDesign);
+
+% Run repeated measures ANOVA
+ranovaResults = ranova(rm);
+
+% Display results
+disp('Repeated Measures ANOVA Results:');
+disp(ranovaResults);
 
 % Post-hoc tests
-posthoc_results = multcompare(stats, 'CType', 'bonferroni');
+%posthoc_results = multcompare(stats, 'CType', 'bonferroni');
 
 %% Step C2: Visualisation
 fprintf('Visualising results...\n');
@@ -446,276 +475,9 @@ saveas(gcf, fullfile(outputFolder, 'theta_power_memory_loads.png'));
 
 
 
-
-
-
-
-
-
-%{
-for i = 1:length(matchedFiles)
-    fprintf('Processing Participant %d: %s -> %s\n', i, matchedFiles(i).memoriseFile, matchedFiles(i).fixationFile);
-    participantIDs{end+1} = matchedFiles(i).memoriseFile;
-
-    % Load memorise and fixation files
-    EEG_memorise = pop_loadset('filename', matchedFiles(i).memoriseFile, 'filepath', memoriseEpochFolder);
-    EEG_fixation = pop_loadset('filename', matchedFiles(i).fixationFile, 'filepath', fixationEpochFolder);
-
-    % Ensure ICA activations
-    EEG_memorise = ensureICAActivations(EEG_memorise);
-    EEG_fixation = ensureICAActivations(EEG_fixation);
-
-    if isempty(EEG_memorise.icaact)
-        disp("Something has gone wrong")
-    end
-
-    %% Dipole Localization: Identify All ICs Near ACC
-    EEG_memorise = performDipfit(EEG_memorise);
-
-    % Ensure ICA activations
-    EEG_memorise = ensureICAActivations(EEG_memorise);
-    EEG_fixation = ensureICAActivations(EEG_fixation);
-
-    if isempty(EEG_memorise.icaact)
-        disp("Something has gone very wrong")
-    end
-
-    candidateICs = findComponentsNearACC(EEG_memorise);
-
-    if isempty(candidateICs)  
-        if ~isfield(EEG_memorise.dipfit, 'model') || isempty(EEG_memorise.dipfit.model) || ~isstruct(EEG_memorise.dipfit.model)
-            warning('DIPFIT model is empty or not initialized. Skipping participant.');
-            continue;
-        end
-        
-        % Compute distances of all ICs to the ACC (MNI [0, 20, 40])
-        accCoords = [0, 20, 40];
-        numICs = length(EEG_memorise.dipfit.model); % Safe to access after the above check
-        distances = nan(numICs, 1); % Preallocate with NaN
-
-        % Loop through all ICs to compute distances and theta power
-        for ic = 1:numICs
-
-            dipole = EEG_memorise.dipfit.model(ic);
-
-            % Skip invalid dipoles
-            if isempty(dipole.posxyz) || isempty(dipole.rv)
-                distances(ic) = Inf;
-                continue;
-            end
-    
-            % Compute Euclidean distance to ACC
-            distances(ic) = norm(dipole.posxyz - accCoords);
-    
-            % Safeguard against invalid indexingthetaBand
-            if ic > size(EEG_memorise.icaact, 1)
-                warning('Skipping IC%d: Index exceeds available ICs in icaact.', ic);
-                distances(ic) = Inf;
-                continue;
-            end
-    
-        end
-
-        % Find the 10 closest ICs to the ACC
-        [sortedDistances, sortedIndices] = sort(distances);
-        top10ICs = sortedIndices(1:min(10, length(sortedIndices))); % Get up to 10 closest ICs
-        fprintf('10 Closest ICs to ACC:\n');
-        for i = 1:length(top10ICs)
-            icIdx = top10ICs(i);
-            fprintf('IC%d: Distance = %.2f mm\n', ...
-                    icIdx, sortedDistances(i));
-        end
-
-        % Assign the closest IC as the fallback
-        candidateICs = top10ICs;
-        disp("The top 10 closest ICs are now considered the candiate ICs")
-
-        % Compute theta power for the candidate ICs
-        thetaPower = computeThetaPower(EEG_memorise, EEG_fixation, thetaBand, candidateICs);
-        
-        fprintf('Number of candidate ICs: %d\n', length(candidateICs));
-        fprintf('Length of thetaPower array: %d\n', length(thetaPower));
-
-
-        % Add theta power to the candidateICs for plotting
-        for i = 1:length(candidateICs)
-            icIdx = candidateICs(i);
-            fprintf('IC%d: Distance = %.2f mm, Theta Power = %.2f\n', ...
-                    icIdx, sortedDistances(i), thetaPower(i));
-        end
-
-        % Plot scalp topographies of the 10 closest ICs
-        figure;
-        for i = 1:length(candidateICs)
-            icIdx = candidateICs(i);
-            subplot(2, 5, i); % Arrange in a 2x5 grid
-            pop_topoplot(EEG_memorise, 0, icIdx, sprintf('IC%d', icIdx), 0, 'electrodes', 'on');
-            title(sprintf('IC%d\nDist: %.2f mm\nTheta: %.2f', icIdx, sortedDistances(i), thetaPower(i)));
-        end
-        sgtitle('Top 10 Closest ICs to ACC');
-    
-        % Plot the ACC location and top 10 ICs in MNI space
-        figure;
-        scatter3(accCoords(1), accCoords(2), accCoords(3), 100, 'r', 'filled'); hold on;
-        for i = 1:length(candidateICs)
-            icIdx = candidateICs(i);
-            scatter3(EEG_memorise.dipfit.model(icIdx).posxyz(1), ...
-                     EEG_memorise.dipfit.model(icIdx).posxyz(2), ...
-                     EEG_memorise.dipfit.model(icIdx).posxyz(3), 100, 'b', 'filled');
-            text(EEG_memorise.dipfit.model(icIdx).posxyz(1), ...
-                 EEG_memorise.dipfit.model(icIdx).posxyz(2), ...
-                 EEG_memorise.dipfit.model(icIdx).posxyz(3), sprintf('IC%d', icIdx));
-        end
-        xlabel('X (mm)'); ylabel('Y (mm)'); zlabel('Z (mm)');
-        legend({'ACC', 'Top 10 ICs'}, 'Location', 'best');
-        grid on; view(3);
-        title('ACC and Top 10 ICs in MNI Space');
-    
-    end
-
-       
-    %% Compute Theta Power and Select Best fmθ Component
-    thetaPower = computeThetaPower(EEG_memorise, EEG_fixation, thetaBand, candidateICs);
-    [~, fmThetaIC] = max(thetaPower);
-    fmThetaIC = candidateICs(fmThetaIC); % Select IC with max theta power among candidates
-    fprintf('Selected fmθ Component: IC%d\n', fmThetaIC);
-
-    %% Visual Inspection of Scalp Topography
-    figure;
-    pop_topoplot(EEG_memorise, 0, fmThetaIC, sprintf('Topography of IC%d (Theta Candidate)', fmThetaIC), 0, 'electrodes', 'on');
-    title(sprintf('Inspect IC%d: Does it align with frontal midline activity?', fmThetaIC));
-    disp('Visually inspect the scalp topography for frontal midline activity.');
-
-    %% Compute ERSP for Each Memory Load
-
-    % Define memory load codes
-    memoryLoadCodes = {'s3', 's5', 's7'}; % Corresponding to loads 3, 5, and 7
-    
-    % Initialize structures to hold data
-    fmThetaData = struct('L3', [], 'L5', [], 'L7', []);
-    baselineERSP = struct('L3', [], 'L5', [], 'L7', []);
-    
-    % Extract trial events and ensure compatibility
-    trialEvents = {EEG_memorise.epoch.eventtype};
-    if iscell(trialEvents)
-        trialEvents = cellfun(@(x) x{1}, trialEvents, 'UniformOutput', false);
-    elseif isstring(trialEvents)
-        trialEvents = cellstr(trialEvents);
-    elseif isnumeric(trialEvents)
-        trialEvents = arrayfun(@num2str, trialEvents, 'UniformOutput', false);
-    else
-        error('Unsupported data type in trialEvents.');
-    end
-    
-    % Separate fmThetaData and compute baseline ERSP for each memory load
-    for loadIdx = 1:length(memoryLoads)
-        loadCode = memoryLoadCodes{loadIdx};
-        loadTrials = contains(trialEvents, loadCode);
-        
-        if any(loadTrials)
-            % Extract task data for current memory load
-            fmThetaData.(sprintf('L%d', memoryLoads(loadIdx))) = EEG_memorise.icaact(fmThetaIC, :, loadTrials);
-            
-            % Compute baseline ERSP using all fixation trials
-            baselineData = reshape(EEG_fixation.icaact(fmThetaIC, :, :), 1, []); % Combine all fixation data
-            [baselineERSP.(sprintf('L%d', memoryLoads(loadIdx))), ~, ~, ~, ~] = ...
-                newtimef(baselineData, EEG_fixation.pnts, ...
-                         [EEG_fixation.xmin EEG_fixation.xmax]*1000, EEG_fixation.srate, [3 0.5], ...
-                         'baseline', NaN, 'plotitc', 'off', 'plotersp', 'off', ...
-                         'freqs', thetaBand, 'nfreqs', 10, 'freqscale', 'linear', 'padratio', 2);
-        else
-            warning('No trials found for memory load %d.', memoryLoads(loadIdx));
-        end
-    end
-    
-    % Function to compute ERSP for task data
-    computeERSP = @(data) newtimef(data, EEG_memorise.pnts, ...
-        [EEG_memorise.xmin EEG_memorise.xmax]*1000, EEG_memorise.srate, [3 0.5], ...
-        'baseline', NaN, 'trialbase', 'full', 'freqs', thetaBand, 'nfreqs', 10, ...
-        'freqscale', 'linear', 'basenorm', 'off', 'plotitc', 'off', 'plotersp', 'off', 'padratio', 2);
-    
-    % Compute ERSPs for each memory load
-    [erspL3, ~, ~, timesL3, freqsL3] = computeERSP(fmThetaData.L3);
-    %[erspL5, ~, ~, timesL5, freqsL5] = computeERSP(fmThetaData.L5);
-    %[erspL7, ~, ~, timesL7, freqsL7] = computeERSP(fmThetaData.L7);
-    
-    % Normalize task ERSP by baseline ERSP
-    erspL3 = erspL3 - baselineERSP.L3;
-    %erspL5 = erspL5 - baselineERSP.L5;
-    %erspL7 = erspL7 - baselineERSP.L7;
-    
-    %{
-    % Store results in a structure for further analysis
-    erspResults = struct('L3', struct('ersp', erspL3, 'times', timesL3, 'freqs', freqsL3), ...
-                         'L5', struct('ersp', erspL5, 'times', timesL5, 'freqs', freqsL5), ...
-                         'L7', struct('ersp', erspL7, 'times', timesL7, 'freqs', freqsL7));
-    %}
-
-    % Store results in a structure for further analysis
-    erspResults = struct('L3', struct('ersp', erspL3, 'times', timesL3, 'freqs', freqsL3));
-
-    % Save ERSP results
-    save(fullfile(outputFolder, 'ersp_results.mat'), 'erspResults');
-    disp('ERSP results saved.');
-
-    % Define theta frequency range
-    thetaRange = [4 7]; % in Hz
-
-    % Find indices corresponding to theta frequencies
-    thetaIndicesL3 = freqsL3 >= thetaRange(1) & freqsL3 <= thetaRange(2);
-    %thetaIndicesL5 = freqsL5 >= thetaRange(1) & freqsL5 <= thetaRange(2);
-    %thetaIndicesL7 = freqsL7 >= thetaRange(1) & freqsL7 <= thetaRange(2);
-
-    % Compute mean ERSP within the theta band for each load
-    meanERSP_L3 = mean(mean(erspL3(thetaIndicesL3, :), 1), 2);
-    %meanERSP_L5 = mean(mean(erspL5(thetaIndicesL5, :), 1), 2);
-    %meanERSP_L7 = mean(mean(erspL7(thetaIndicesL7, :), 1), 2);
-    
-    % Store the mean ERSP values
-    erspL3_means = [erspL3_means; meanERSP_L3];
-    %erspL5_means = [erspL5_means; meanERSP_L5];
-    %erspL7_means = [erspL7_means; meanERSP_L7];
-
-
-    %% Append data for CSV and ANOVA
-    % Extract participant ID without file extension
-    erspL3_means(end+1) = erspL3_means;
-    %erspL5_means(end+1) = meanL5;
-    %erspL7_means(end+1) = meanL7;
-end
-
-%% Export Results to CSV
-% Create a table for CSV export
-%{
-csvTable = table(participantIDs', erspL3_means', erspL5_means', erspL7_means', ...
-    'VariableNames', {'ParticipantID', 'ERSP_L3', 'ERSP_L5', 'ERSP_L7'});
-%}
-csvTable = table(participantIDs', erspL3_means', ...
-    'VariableNames', {'ParticipantID', 'ERSP_L3'});
-% Save the csv 
-csvFileName = fullfile(outputFolder, 'theta_power_memory_load.csv');
-writetable(csvTable, csvFileName);
-disp(['CSV file saved: ' csvFileName]);
-
-%% Perform Repeated-Measures ANOVA
-loadLabels = arrayfun(@(x) sprintf('Load_%d', x), memoryLoads, 'UniformOutput', false);
-thetaPowerTable = array2table(thetaPowerMatrix, 'VariableNames', loadLabels);
-
-% ANOVA Model
-rm = fitrm(thetaPowerTable, sprintf('%s-%s~1', loadLabels{1}, loadLabels{end}), 'WithinDesign', memoryLoads');
-ranovaResults = ranova(rm);
-
-% Display Results
-disp('Repeated-Measures ANOVA Results:');
-disp(ranovaResults);
-
-%% Save ANOVA Results
-save(fullfile(outputFolder, 'theta_power_memory_results.mat'), 'thetaPowerMatrix', 'ranovaResults');
-disp('ANOVA results saved.');
-%}
-
-
-
+%% TO DO
+%Check when ammending the length if it needs to be based on the indexs
+% rather than the length
 
 
 %% Utility Functions
@@ -792,7 +554,7 @@ function candidateICs = findComponentsNearACC(EEG) % Finds dipoles in ACC using 
     candidateICs = [];
     for ic = 1:length(EEG.dipfit.model)
         dipole = EEG.dipfit.model(ic);
-        % Check for residual variance and dACC location
+        % Check for residual variance and ACC location
         if dipole.rv < 0.2 && abs(dipole.posxyz(1)) <= 10 ... % Midline constraint
                 && dipole.posxyz(2) >= 10 && dipole.posxyz(2) <= 50 ... % Anterior-posterior constraint
                 && dipole.posxyz(3) >= 10 && dipole.posxyz(3) <= 50 % inferior - superior constraint
