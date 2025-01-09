@@ -110,10 +110,13 @@ for i = 1:length(matchedFiles)
     [num_channels, num_frequencies, num_time_points] = size(ERSP_baseline_norm);
     fprintf('Debug: ERSP dimensions - Channels: %d, Frequencies: %d, Time Points: %d\n', ...
         num_channels, num_frequencies, num_time_points);
-    
+
+    % Number of ICs
+    num_ICs = size(EEG_memorise.icaact, 1); % [num ICs, timepoint/epoch, num epochs]
+
     % Reshape ERSP to isolate the time dimension for PCA
-    reshaped_for_time_PCA = permute(ERSP_baseline_norm, [2, 3, 1]); % [frequencies x time points x channels]
-    reshaped_for_time_PCA = reshape(reshaped_for_time_PCA, num_frequencies * num_time_points, num_channels); % [frequencies*time points x channels]
+    reshaped_for_time_PCA = reshape(ERSP_baseline_norm, num_frequencies * num_time_points, num_ICs); % [frequencies*time points x ICs]
+    %reshaped_for_time_PCA = reshape(reshaped_for_time_PCA, num_frequencies * num_time_points, num_channels); % [frequencies*time points x channels]
     
     % Debug reshaping
     fprintf('Debug: Reshaped ERSP for PCA across time - Dimensions: [%d x %d]\n', ...
@@ -229,6 +232,8 @@ for i = 1:length(matchedFiles)
     fprintf('Valid dipole indices: %s\n', mat2str(find(valid_idx)));
     fprintf('Distances from ACC centroid: %s\n', mat2str(distances));
     
+    % Retain spatially valid ICs:
+    valid_ICs = find(valid_idx);
 
     % Adjust valid_idx length to match theta_scores
     if length(valid_idx) ~= length(theta_scores)
@@ -330,20 +335,32 @@ for i = 1:length(matchedFiles)
  
     %% Step B3: Calculate Theta Power
     fprintf('Calculating theta power...\n');
-
+    
     % Function to compute theta power for a set of epochs
     compute_power = @(activity, epochs, theta_band, srate) arrayfun(@(e) ...
         mean(mean(abs(fft(activity(:, e), [], 1)).^2, 1)), epochs);
-    
+    %{
     % Calculate theta power for memorise epochs
     theta_power_memorise = cellfun(@(epochs) ...
         compute_power(fm_theta_activity, epochs, thetaBand, EEG_memorise.srate), ...
         memorise_by_load, 'UniformOutput', false);
-    
+    %}
+    %-------------
+    % Calculate theta power for memorise epochs
+    theta_power_memorise = cellfun(@(epochs) ...
+    computeThetaPower(fm_theta_activity, epochs, thetaBand, EEG_memorise.srate), ...
+    memorise_by_load, 'UniformOutput', false);
+
     % Calculate theta power for fixation epochs
     theta_power_fixation = cellfun(@(epochs) ...
         compute_power(fm_theta_activity, epochs, thetaBand, EEG_fixation.srate), ...
         fixation_by_load, 'UniformOutput', false);
+
+    % Baseline-normalise theta power
+    %theta_power_normalised = cellfun(@(memorise, fixation) ...
+    %mean(memorise) - mean(fixation), ...
+    %theta_power_memorise, theta_power_fixation);
+    %-------------
 
     % Aggregate theta power
     fprintf('Aggregating and baseline-normalising theta power...\n');
@@ -495,41 +512,41 @@ function EEG = ensureICAActivations(EEG)
     end
 end
 
-function thetaPower = computeThetaPower(EEG_task, EEG_fixation, thetaBand, candidateICs)
-    % Computes baseline-normalised theta power in dB
-    thetaPower = zeros(length(candidateICs), 1);
-    for idx = 1:length(candidateICs)
-        ic = candidateICs(idx);
-
-        % Task data
-        icData_task = reshape(EEG_task.icaact(ic, :, :), 1, []);
-        fftData_task = fft(icData_task, 512); % Zero-padded FFT
-        powerSpectrum_task = abs(fftData_task(1:256)).^2; % Single-sided
+function thetaPower = computeThetaPower(activity_data, epochs, thetaBand, srate)
+    % computeThetaPower Computes theta power for given epochs and theta band
+    %
+    % Inputs:
+    %   activity_data - Time x Epochs matrix (e.g., 1500 x 609)
+    %   epochs - Epoch indices to compute power for
+    %   thetaBand - [min_theta max_theta], frequency range for theta
+    %   srate - Sampling rate in Hz
+    %
+    % Output:
+    %   thetaPower - Mean theta power across epochs and time
+    
+    % Extract epochs from activity data
+    selected_data = activity_data(:, epochs); % Dimensions: Time x Selected Epochs
+    
+    % Compute power spectral density (PSD) using FFT
+    nfft = size(selected_data, 1); % Number of FFT points (equal to time samples)
+    freqs = linspace(0, srate / 2, floor(nfft / 2) + 1); % Frequency vector
+    theta_range = find(freqs >= thetaBand(1) & freqs <= thetaBand(2)); % Indices for theta band
+    
+    % Calculate FFT for each epoch
+    thetaPower_epochs = zeros(1, size(selected_data, 2)); % Preallocate theta power
+    for epoch = 1:size(selected_data, 2)
+        % FFT for single epoch
+        fft_result = fft(selected_data(:, epoch), nfft);
+        psd = abs(fft_result(1:floor(nfft / 2) + 1)).^2; % One-sided PSD
         
-        % Fixation (baseline) data
-        icData_fixation = reshape(EEG_fixation.icaact(ic, :, :), 1, []);
-        fftData_fixation = fft(icData_fixation, 512); % Zero-padded FFT
-        powerSpectrum_fixation = abs(fftData_fixation(1:256)).^2; % Single-sided
-        
-        % Frequency vector
-        freqRes = EEG_task.srate / 512;
-        f = (0:255) * freqRes;
-        
-        % Theta band indices
-        thetaIdx = f >= thetaBand(1) & f <= thetaBand(2);
-        
-        % Mean power in theta band for task and fixation
-        meanThetaPower_task = mean(powerSpectrum_task(thetaIdx));
-        meanThetaPower_fixation = mean(powerSpectrum_fixation(thetaIdx));
-        
-        % Convert to decibels (10 * log10)
-        taskPower_dB = 10 * log10(meanThetaPower_task);
-        fixationPower_dB = 10 * log10(meanThetaPower_fixation);
-        
-        % Baseline-normalized theta power (difference in dB)
-        thetaPower(idx) = taskPower_dB - fixationPower_dB;
+        % Compute mean theta power
+        thetaPower_epochs(epoch) = mean(psd(theta_range));
     end
+    
+    % Compute mean theta power across all selected epochs
+    thetaPower = mean(thetaPower_epochs);
 end
+
 
 
 
@@ -576,8 +593,8 @@ epochs, and outputs the normalized ERSP for all channels as a
 3D array (channels × frequencies × time points).
 %}
     % Extract data
-    activity_data = EEG_memorise.data; % Dimensions: channels x time points x epochs
-    baseline_data = EEG_fixation.data; % Dimensions: channels x time points x epochs
+    activity_data = EEG_memorise.icaact; 
+    baseline_data = EEG_fixation.icaact; 
     
     % Convert baseline to 2D (collapse across epochs)
     baseline_data_2d = reshape(baseline_data, size(baseline_data, 1), []); % Channels x (time*epochs)
