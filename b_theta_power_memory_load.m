@@ -116,7 +116,6 @@ for i = 1:length(matchedFiles)
 
     % Reshape ERSP to isolate the time dimension for PCA
     reshaped_for_time_PCA = reshape(ERSP_baseline_norm, num_frequencies * num_time_points, num_ICs); % [frequencies*time points x ICs]
-    %reshaped_for_time_PCA = reshape(reshaped_for_time_PCA, num_frequencies * num_time_points, num_channels); % [frequencies*time points x channels]
     
     % Debug reshaping
     fprintf('Debug: Reshaped ERSP for PCA across time - Dimensions: [%d x %d]\n', ...
@@ -567,20 +566,6 @@ function EEG = performDipfit(EEG)
 end
 
 
-function candidateICs = findComponentsNearACC(EEG) % Finds dipoles in ACC using MNI Coordinate range X: -10 to +10 (midline), Y: 10 to 50 (anterior-posterior), Z: 10 to 50 (superior-inferior)
-    candidateICs = [];
-    for ic = 1:length(EEG.dipfit.model)
-        dipole = EEG.dipfit.model(ic);
-        % Check for residual variance and ACC location
-        if dipole.rv < 0.2 && abs(dipole.posxyz(1)) <= 10 ... % Midline constraint
-                && dipole.posxyz(2) >= 10 && dipole.posxyz(2) <= 50 ... % Anterior-posterior constraint
-                && dipole.posxyz(3) >= 10 && dipole.posxyz(3) <= 50 % inferior - superior constraint
-            candidateICs = [candidateICs, ic];
-        end
-    end
-end
-
-
 
 function ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
 %{
@@ -590,22 +575,18 @@ normalises it using the baseline power derived from the "fixation"
 EEG dataset (EEG_fixation). It uses the newtimef function to perform 
 time-frequency decomposition on each IC, averages the ERSP across 
 epochs, and outputs the normalized ERSP for all ICs as a 
-3D array (channels × frequencies × time points).
+3D array (ICs × frequencies × time points).
 %}
     % Extract data
     activity_data = EEG_memorise.icaact; % IC x Time x Epochs
     baseline_data = EEG_fixation.icaact; % IC x Time x Epochs
     
     % Convert baseline to 2D (collapse across epochs)
-    %baseline_data_2d = reshape(baseline_data, size(baseline_data, 1), []); % Channels x (time*epochs)
     baseline_data_2d = reshape(baseline_data, size(baseline_data, 1), []); % ICs x (Time*Epochs)
 
     % Compute mean power across baseline epochs for normalisation
-    %baseline_mean = mean(abs(baseline_data_2d).^2, 2); % Channels x frequencies (later applied per freq)
     baseline_mean = mean(abs(baseline_data_2d).^2, 2); % ICs x Frequencies
     
-     % Initialise outputs
-    %num_channels = size(activity_data, 1);
     
     % Use newtimef once on the first IC to get output dimensions
     [test_ersp, ~, ~, times, freqs] = newtimef( ...
@@ -624,10 +605,6 @@ epochs, and outputs the normalized ERSP for all ICs as a
     % Get actual output dimensions from newtimef
     num_freqs = size(test_ersp, 1);
     num_times = size(test_ersp, 2);
-    %{
-    % Preallocate output array
-    ersp_all_channels = zeros(num_channels, num_freqs, num_times);
-    %}
 
     % Number of ICs
     num_ICs = size(activity_data, 1); % Rows correspond to ICs
@@ -635,8 +612,6 @@ epochs, and outputs the normalized ERSP for all ICs as a
     % Preallocate output array
     ersp_all_ICs = zeros(num_ICs, num_freqs, num_times);
 
-    % Process all channels
-    %for chan = 1:num_channels
 
     % Process all ICs
     for ic = 1:num_ICs
@@ -654,15 +629,11 @@ epochs, and outputs the normalized ERSP for all ICs as a
             'plotitc', 'off' ...
         );
 
-        % Store ERSP for current channel
-        %ersp_all_channels(chan, :, :) = mean(ersp, 3); % Average across epochs
-
         % Store ERSP for current IC
         ersp_all_ICs(ic, :, :) = mean(ersp, 3); % Average across epochs
     end
 
     % Return baseline-normalised ERSP
-    %ERSP_baseline_norm = ersp_all_channels;
     ERSP_baseline_norm = ersp_all_ICs;
 end
 
