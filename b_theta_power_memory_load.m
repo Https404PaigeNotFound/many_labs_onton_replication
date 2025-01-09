@@ -585,65 +585,85 @@ end
 function ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
 %{
 This function computes the Event-Related Spectral Perturbation (ERSP) 
-for all channels in the "memorise" EEG dataset (EEG_memorise) and 
+for all ICs in the "memorise" EEG dataset (EEG_memorise) and 
 normalises it using the baseline power derived from the "fixation" 
 EEG dataset (EEG_fixation). It uses the newtimef function to perform 
-time-frequency decomposition on each channel, averages the ERSP across 
-epochs, and outputs the normalized ERSP for all channels as a 
+time-frequency decomposition on each IC, averages the ERSP across 
+epochs, and outputs the normalized ERSP for all ICs as a 
 3D array (channels × frequencies × time points).
 %}
     % Extract data
-    activity_data = EEG_memorise.icaact; 
-    baseline_data = EEG_fixation.icaact; 
+    activity_data = EEG_memorise.icaact; % IC x Time x Epochs
+    baseline_data = EEG_fixation.icaact; % IC x Time x Epochs
     
     % Convert baseline to 2D (collapse across epochs)
-    baseline_data_2d = reshape(baseline_data, size(baseline_data, 1), []); % Channels x (time*epochs)
-    
+    %baseline_data_2d = reshape(baseline_data, size(baseline_data, 1), []); % Channels x (time*epochs)
+    baseline_data_2d = reshape(baseline_data, size(baseline_data, 1), []); % ICs x (Time*Epochs)
+
     % Compute mean power across baseline epochs for normalisation
-    baseline_mean = mean(abs(baseline_data_2d).^2, 2); % Channels x frequencies (later applied per freq)
+    %baseline_mean = mean(abs(baseline_data_2d).^2, 2); % Channels x frequencies (later applied per freq)
+    baseline_mean = mean(abs(baseline_data_2d).^2, 2); % ICs x Frequencies
     
      % Initialise outputs
-    num_channels = size(activity_data, 1);
+    %num_channels = size(activity_data, 1);
     
-    % Use newtimef once on the first channel to get output dimensions
+    % Use newtimef once on the first IC to get output dimensions
     [test_ersp, ~, ~, times, freqs] = newtimef( ...
         squeeze(activity_data(1, :, :)), ...
         EEG_memorise.pnts, ...
         [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, ...
         EEG_memorise.srate, ...
         [3], ... #cycles
-        'baseline', baseline_mean(1), ...
+        'padratio', 2, ...        % Zero-padding to improve frequency resolution
+        'winsize', 512, ...       % Fixed window length
+        'baseline', baseline_mean(1), ... % Baseline normalisation
         'plotersp', 'off', ...
         'plotitc', 'off' ...
     );
-
+    
     % Get actual output dimensions from newtimef
     num_freqs = size(test_ersp, 1);
     num_times = size(test_ersp, 2);
-
+    %{
     % Preallocate output array
     ersp_all_channels = zeros(num_channels, num_freqs, num_times);
+    %}
+
+    % Number of ICs
+    num_ICs = size(activity_data, 1); % Rows correspond to ICs
+    
+    % Preallocate output array
+    ersp_all_ICs = zeros(num_ICs, num_freqs, num_times);
 
     % Process all channels
-    for chan = 1:num_channels
-        % Run newtimef for each channel
+    %for chan = 1:num_channels
+
+    % Process all ICs
+    for ic = 1:num_ICs
+        % Run newtimef for each IC
         [ersp, ~, ~, ~, ~] = newtimef( ...
-            squeeze(activity_data(chan, :, :)), ...
+            squeeze(activity_data(ic, :, :)), ...
             EEG_memorise.pnts, ...
             [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, ...
             EEG_memorise.srate, ...
             [3], ... #cycles
-            'baseline', baseline_mean(chan), ...
+            'padratio', 2, ...        % Zero-padding to improve frequency resolution
+            'winsize', 512, ...       % Fixed window length
+            'baseline', baseline_mean(ic), ... % Baseline normalisation
             'plotersp', 'off', ...
             'plotitc', 'off' ...
         );
 
         % Store ERSP for current channel
-        ersp_all_channels(chan, :, :) = mean(ersp, 3); % Average across epochs
+        %ersp_all_channels(chan, :, :) = mean(ersp, 3); % Average across epochs
+
+        % Store ERSP for current IC
+        ersp_all_ICs(ic, :, :) = mean(ersp, 3); % Average across epochs
     end
 
     % Return baseline-normalised ERSP
-    ERSP_baseline_norm = ersp_all_channels;
+    %ERSP_baseline_norm = ersp_all_channels;
+    ERSP_baseline_norm = ersp_all_ICs;
 end
 
 
