@@ -109,9 +109,9 @@ for i = 1:length(matchedFiles)
     EEG_fixation = ensureICAActivations(EEG_fixation);
     EEG_ignore = ensureICAActivations(EEG_ignore);
 
-    %% Step A1: Compute ERSPs for Memorise Epochs (Baseline-Normalised)
-    fprintf('Computing ERSPs for memorise epochs...\n');
-    ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise);
+    %% Step A1: Compute ERSPs for Ignore Epochs (Baseline-Normalised); use ignore to find fmα component
+    fprintf('Computing ERSPs for ignore epochs...\n');
+    ERSP_baseline_norm = condition_ERSP_baseline_norm(EEG_fixation, EEG_ignore);
     fprintf('Baseline normalisation complete.\n');
 
 
@@ -124,7 +124,7 @@ for i = 1:length(matchedFiles)
         num_channels, num_frequencies, num_time_points);
 
     % Number of ICs
-    num_ICs = size(EEG_memorise.icaact, 1); % [num ICs, timepoint/epoch, num epochs]
+    num_ICs = size(EEG_ignore.icaact, 1); % [num ICs, timepoint/epoch, num epochs]
 
     % Reshape ERSP to isolate the time dimension for PCA
     reshaped_for_time_PCA = reshape(ERSP_baseline_norm, num_frequencies * num_time_points, num_ICs); % [frequencies*time points x ICs]
@@ -224,11 +224,11 @@ for i = 1:length(matchedFiles)
     
     % Spatial Validation           
     fprintf('Performing spatial validation with DIPFIT...\n');
-    EEG_memorise = performDipfit(EEG_memorise);
+    EEG_ignore = performDipfit(EEG_ignore);
 
     fprintf('Validating IC-to-dipole mapping...\n');
     num_ICs = size(ica_weights, 1);
-    num_dipoles = length(EEG_memorise.dipfit.model);
+    num_dipoles = length(EEG_ignore.dipfit.model);
     
    if num_ICs ~= num_dipoles
         warning('Mismatch: Number of ICs (%d) does not match number of dipoles (%d). Adjusting to the smaller count.', ...
@@ -237,7 +237,7 @@ for i = 1:length(matchedFiles)
    end
 
     % Validate dipoles based on spatial and residual variance criteria
-    [valid_idx, distances] = validate_dipoles(EEG_memorise, rv_threshold, mni_constraints, acc_centroid);
+    [valid_idx, distances] = validate_dipoles(EEG_ignore, rv_threshold, mni_constraints, acc_centroid);
 
     % Debug output
     fprintf('Valid dipole indices: %s\n', mat2str(find(valid_idx)));
@@ -294,10 +294,10 @@ for i = 1:length(matchedFiles)
     %% Step B1: Extract Component Activity
     fprintf('Extracting component activity for fmα...\n');
     % Ensure ICA activations
-    EEG_memorise = ensureICAActivations(EEG_memorise);
+    EEG_ignore = ensureICAActivations(EEG_ignore);
 
     % Extract the time series activity for the identified fmα component
-    fm_alpha_activity = EEG_memorise.icaact(fm_alpha_idx, :, :); % Dimensions: [1 x time points x epochs]
+    fm_alpha_activity = EEG_ignore.icaact(fm_alpha_idx, :, :); % Dimensions: [1 x time points x epochs]
 
     % Reshape the activity into [time points x epochs]
     fm_alpha_activity = squeeze(fm_alpha_activity); % Dimensions: [time points x epochs]memoryLoads
@@ -648,7 +648,7 @@ end
 
 
 
-function ERSP_baseline_norm = memorise_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
+function ERSP_baseline_norm = condition_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
 %{
 This function computes the Event-Related Spectral Perturbation (ERSP) 
 for all ICs in the "memorise" EEG dataset (EEG_memorise) and 
