@@ -3,15 +3,16 @@
 
 # But not these files...
 !*.m
+!*.xlsx
 
 # ...and not this folder...
 !brainvision_eeg/
-
-# ...and not this folder...
+!channel_locs/
 !utils/
 
 # ...and not anything in that folder
 !utils/**
+!channel_locs/**
 
 # ...also don't ignore these folders, since it' gives structure
 
