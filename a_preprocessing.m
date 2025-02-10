@@ -65,11 +65,13 @@ for i = 1:length(EEGfileNames)
     end
 
     % Add channel locations
-    chanlocs = EEG.chanlocs;
-    disp('chanlocs');
-    disp(chanlocs);
+    disp('EEG.chanlocs');
+    disp(EEG.chanlocs);
+
+    % Opens channel edit GUI
+    %pop_chanedit(EEG.chanlocs);
     % Add channel locations using the 10-10 system
-    EEG = pop_chanedit(EEG, 'lookup', fullfile(pathToEEGLAB, 'channel_locs', 'Salford_DDE-OP-3345rev01_Electrodes_positions_CA-208.elc'));
+    EEG = pop_chanedit(EEG, 'lookup', fullfile(pathToEEGLAB, 'channel_locs', 'salford_custom_chanlocs.sfp'));
     
     % Visualise the EEG data using EEGLAB GUI
     %eegplot(EEG.data, 'srate', EEG.srate, 'title', 'Not clean EEG data');
