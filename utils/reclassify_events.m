@@ -59,47 +59,65 @@ function EEG = reclassify_events(EEG)
         EEG.event(i).MainLoad = 'n/a';
     end
 
-    % Processing events
-    accumulated_count = 0;
-    current_main_load = 'n/a';
+    % Init counters
+    accumulated_count = 0;  % Tracks number of memorise letters shown
+    current_main_load = 'n/a';  % Tracks MainLoad for the trial
+    last_memorise_count = 0;  % Tracks latest memorise count
+    last_event = 'n/a';
 
     for i = 1:length(EEG.event)
         eventType = EEG.event(i).type;
-        
-        % If Fixation, reset counters
-        if ismember(eventType, fixationEvent)
+
+        % Reset at Fixation or Rest (New Trial)
+        if ismember(eventType, fixationCrossEvent) || ismember(eventType, interTrialRestEvent)
             EEG.event(i).AccLoad = 'n/a';
             EEG.event(i).MainLoad = 'n/a';
             accumulated_count = 0;
+            last_memorise_count = 0;
             current_main_load = 'n/a';
-        
-        % If Memorise Letter Event, update AccLoad and MainLoad
+            last_event = EEG.event(i).AccLoad;
+
+        % Memorise Letter Events - Increments Load
         elseif ismember(eventType, memoriseLetterEvents)
             EEG.event(i).AccLoad = sprintf('L%d_Memorise', accumulated_count);
-            mainLoadValue = eventType(2); % Extracts first digit (memory load)
+            last_event = EEG.event(i).AccLoad;
+            mainLoadValue = eventType(2); % Extract first digit (memory load)
             current_main_load = sprintf('L%s_Maintenance', mainLoadValue);
-            EEG.event(i).MainLoad = current_main_load;
-            accumulated_count = accumulated_count + 1;
-        
-        % If Ignore Letter Event, update AccLoad but keep MainLoad the same
+            EEG.event(i).MainLoad = current_main_load; % Add Maintenance Load
+            last_memorise_count = accumulated_count; % Update memorise count
+            accumulated_count = accumulated_count + 1; % Increment memorise count
+
+        % Ignore Letter Events 
         elseif ismember(eventType, ignoreLetterEvents)
-            EEG.event(i).AccLoad = sprintf('L%d_Ignore', accumulated_count);
-            EEG.event(i).MainLoad = current_main_load;
-            accumulated_count = accumulated_count + 1;
-        
-        % If Maintenance Event, use the current MainLoad
-        elseif ismember(eventType, maintenanceEvent)
+            mainLoadValue = regexp(eventType, '\d', 'match'); % Extract all digits
+            mainLoadValue = mainLoadValue{1}; % Get the first extracted digit
+            mainLoadValue = str2double(mainLoadValue) - 1; % Convert to integer and subtract 1
+            current_main_load = sprintf('L%d_Maintenance', mainLoadValue); 
+            EEG.event(i).MainLoad = current_main_load; % Add Maintenance Load
+            % If no memorise letters have been shown yet, use L0_Ignore and what to do if the last_event was L0_Memorise
+            if strcmp(last_event, 'L0_Memorise')
+                EEG.event(i).AccLoad = 'L1_Ignore';
+            elseif last_memorise_count == 0
+                EEG.event(i).AccLoad = 'L0_Ignore';
+                last_event = EEG.event(i).AccLoad;
+            else
+                EEG.event(i).AccLoad = sprintf('L%d_Ignore', accumulated_count);
+                last_event = EEG.event(i).AccLoad;
+            end
+
+        % Maintenance Event - Uses Current Main Load
+        elseif ismember(eventType, variableMaintenancePeriodEvent)
             EEG.event(i).AccLoad = 'n/a';
             EEG.event(i).MainLoad = current_main_load;
-        
-        % If Probe, Response, or Rest, set to 'n/a'
-        elseif ismember(eventType, probeEvents) || ismember(eventType, responseEvents) || ismember(eventType, restEvents)
+            last_event = EEG.event(i).AccLoad;
+
+        % Probe, Response, and Rest - Set to 'n/a'
+        elseif ismember(eventType, probeEvents) || ismember(eventType, correctAnswerEvent) || ismember(eventType, wrongAnswerEvent) || ismember(eventType, interTrialRestEvent)
             EEG.event(i).AccLoad = 'n/a';
             EEG.event(i).MainLoad = 'n/a';
+            last_event = EEG.event(i).AccLoad;
         end
     end
-
-
 
 
     %{
@@ -167,8 +185,9 @@ function EEG = reclassify_events(EEG)
         eventType = {EEG.event.type}';
         eventLatency = num2cell([EEG.event.latency]');
         eventDuration = num2cell([EEG.event.duration]');
-        eventAccLoad = num2cell([EEG.event.AccLoad]');
-        eventMainLoad = num2cell([EEG.event.MainLoad]');
+        eventAccLoad = {EEG.event.AccLoad}';
+        eventMainLoad = {EEG.event.MainLoad}';
+
         
         
         % Check if all events have a 'duration' field; if not, adjust accordingly
