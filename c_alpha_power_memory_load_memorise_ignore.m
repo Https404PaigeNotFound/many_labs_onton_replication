@@ -38,7 +38,6 @@ addpath('utils');
 
 % Analysis Parameters
 alphaBand = [8 12]; % Alpha frequency range (8–12 Hz)
-memoryLoads = [3, 5, 7]; % Memory load conditions
 freqs = [2 30];
 rv_threshold = 0.15; % 15% residual variance
 mni_constraints = [-10 10; 10 50; 10 50]; % Midline ACC constraints
@@ -57,16 +56,11 @@ if length(memoriseFiles) ~= length(fixationFiles) || length(memoriseFiles) ~= le
     error('Mismatch between number of memorise and fixation/ignore files.');
 end
 
-% Preallocate variables for CSVs and ANOVA
-csvData = [];
-participantIDs = {};
-memorise_erspL3_means = [];
-memorise_erspL5_means = [];
-memorise_erspL7_means = [];
-ignore_erspL3_means = [];
-ignore_erspL5_means = [];
-ignore_erspL7_means = [];
-dipole_info = [];
+% Preallocate for dynamic loads L0 to L5
+accumulatedLoads = 0:5;
+memorise_erspMeans = cell(1, length(accumulatedLoads));
+ignore_erspMeans = cell(1, length(accumulatedLoads));
+
 fm_alpha_idx_di = [];
 fm_alpha_rv_di = [];
 posX = [];
@@ -306,33 +300,26 @@ for i = 1:length(matchedFiles)
     %% Step B2: Separate Epochs by Memory Load (memorise)
 
     fprintf('Separating memorise epochs by memory load...\n');
-
-    % Preallocate containers for memory load subsets
-    memorise_by_load = cell(1, length(memoryLoads)); % memoryLoads = [3, 5, 7]
-    
-    % Loop through epochs to sort by memory load
-    for e = 1:length(EEG_memorise.epoch)
-        % Extract the first event type string
-        load_type_str = EEG_memorise.epoch(e).eventtype{1}; % Get the first cell element
-    
-        % Extract the numeric prefix from the event type string
-        if startsWith(load_type_str, 's')
-            load_type = str2double(load_type_str(2)); % Extract the first digit after 's'
+% Sort memorise epochs using eventAccLoad
+memorise_by_load = cell(1, length(accumulatedLoads));
+for e = 1:length(EEG_memorise.epoch)
+    if isfield(EEG_memorise.epoch(e), 'eventAccLoad')
+        accLoadStr = EEG_memorise.epoch(e).eventAccLoad{1};
+        loadNum = sscanf(accLoadStr, 'L%d');
+        if ~isempty(loadNum) && loadNum <= 5
+            memorise_by_load{loadNum+1} = [memorise_by_load{loadNum+1}, e];
         else
-            warning('Event type %s does not start with "s". Skipping epoch %d.', load_type_str, e);
-            continue;
+            warning('Unexpected AccLoad format in memorise epoch %d: %s', e, accLoadStr);
         end
-    
-        % Match the extracted load type to memoryLoads
-        load_idx = find(memoryLoads == load_type, 1);
-        if ~isempty(load_idx)
-            memorise_by_load{load_idx} = [memorise_by_load{load_idx}, e];
-        else
-            warning('Unknown memory load type in epoch %d: %s', e, load_type_str);
-        end
+    else
+        warning('Missing eventAccLoad in memorise epoch %d', e);
     end
-    fprintf('Memorise epochs split into memory load conditions.\n');
-    
+end
+% Preallocate containers for accumulated memory load subsets (L0 to L5)
+accumulatedLoads = 0:5;
+memorise_erspMeans = cell(1, length(accumulatedLoads));
+ignore_erspMeans = cell(1, length(accumulatedLoads));
+
     fprintf('Assigning fixation epochs cyclically by memory load...\n');
     
     %% Preallocate containers for fixation load subsets
@@ -346,35 +333,26 @@ for i = 1:length(matchedFiles)
     %% Step B2: Separate Epochs by Memory Load (ignore)
 
     fprintf('Separating ignore epochs by memory load...\n');
-    
-    ignoreMemoryLoads = [4, 6, 8];% 4 = memory load 3, 6 = memory load 5, and 8 = memory load 7
-
-    % Preallocate containers for memory load subsets
-    ignore_by_load = cell(1, length(ignoreMemoryLoads)); 
-
-    % Loop through epochs to sort by memory load
-    for e = 1:length(EEG_ignore.epoch)
-        % Extract the first event type string
-        load_type_str = EEG_ignore.epoch(e).eventtype{1}; % Get the first cell element
-    
-        % Extract the numeric prefix from the event type string
-        if startsWith(load_type_str, 's')
-            load_type = str2double(load_type_str(2)); % Extract the first digit after 's'
+% Sort ignore epochs using eventAccLoad
+ignore_by_load = cell(1, length(accumulatedLoads));
+for e = 1:length(EEG_ignore.epoch)
+    if isfield(EEG_ignore.epoch(e), 'eventAccLoad')
+        accLoadStr = EEG_ignore.epoch(e).eventAccLoad{1};
+        loadNum = sscanf(accLoadStr, 'L%d');
+        if ~isempty(loadNum) && loadNum <= 5
+            ignore_by_load{loadNum+1} = [ignore_by_load{loadNum+1}, e];
         else
-            warning('Event type %s does not start with "s". Skipping epoch %d.', load_type_str, e);
-            continue;
+            warning('Unexpected AccLoad format in ignore epoch %d: %s', e, accLoadStr);
         end
-    
-        % Match the extracted load type to memoryLoads
-        load_idx = find(ignoreMemoryLoads == load_type, 1);
-        if ~isempty(load_idx)
-            ignore_by_load{load_idx} = [ignore_by_load{load_idx}, e];
-        else
-            warning('Unknown memory load type in epoch %d: %s', e, load_type_str);
-        end
+    else
+        warning('Missing eventAccLoad in ignore epoch %d', e);
     end
-    fprintf('Memorise epochs split into memory load conditions.\n');
-    
+end
+% Preallocate containers for accumulated memory load subsets (L0 to L5)
+accumulatedLoads = 0:5;
+memorise_erspMeans = cell(1, length(accumulatedLoads));
+ignore_erspMeans = cell(1, length(accumulatedLoads));
+
     fprintf('Assigning fixation epochs cyclically by memory load...\n');
     
  
@@ -453,16 +431,12 @@ for i = 1:length(matchedFiles)
 
 
     %% Save Participant-Level Data
-    csvData = [csvData; mean_alpha_power, ignore_mean_alpha_power]; % Append to CSV data
-    memorise_erspL3_means = [memorise_erspL3_means; mean_alpha_power(1)];
-    memorise_erspL5_means = [memorise_erspL5_means; mean_alpha_power(2)];
-    memorise_erspL7_means = [memorise_erspL7_means; mean_alpha_power(3)];
-    
-    ignore_erspL3_means = [ignore_erspL3_means; ignore_mean_alpha_power(1)];
-    ignore_erspL5_means = [ignore_erspL5_means; ignore_mean_alpha_power(2)];
-    ignore_erspL7_means = [ignore_erspL7_means; ignore_mean_alpha_power(3)];
+% Store participant-level data dynamically
+for load = accumulatedLoads
+    memorise_erspMeans{load+1} = [memorise_erspMeans{load+1}; mean_alpha_power(load+1)];
+    ignore_erspMeans{load+1} = [ignore_erspMeans{load+1}; ignore_mean_alpha_power(load+1)];
+end
 
-disp("Exiting the big loop!")
 end
 
 %{
@@ -492,11 +466,12 @@ fprintf('Final cluster includes %d components from %d participants.\n', ...
 
 %% Export Results to CSV
 % Create a table for CSV export
-csvTable = table(participantIDs', memorise_erspL3_means', memorise_erspL5_means', memorise_erspL7_means', ignore_erspL3_means', ignore_erspL5_means', ignore_erspL7_means', ...
-    'VariableNames', {'ParticipantID', 'Memorise_ERSP_L3', 'Memorise_ERSP_L5', 'Memorise_ERSP_L7', 'Ignore_ERSP_L3', 'Ignore_ERSP_L5', 'Ignore_ERSP_L7'});
-% Save the csv 
-csvFileName = fullfile(outputFolder, 'alpha_power_memory_load_memorise_ignore.csv');
-writetable(csvTable, csvFileName);
+csvTable = table(participantIDs');
+for load = accumulatedLoads
+    csvTable.(['Memorise_ERSP_L' num2str(load)]) = memorise_erspMeans{load+1};
+    csvTable.(['Ignore_ERSP_L' num2str(load)]) = ignore_erspMeans{load+1};
+end
+
 disp(['CSV file saved: ' csvFileName]);
 
 % Print sizes to console
@@ -519,62 +494,45 @@ disp(['Dipole information saved as CSV: ' csvFileName_dt]);
 
 
 %% Step C1: Statistical Analysis
-% Organise data for repeated measures
-memorise_data = [memorise_erspL3_means, memorise_erspL5_means, memorise_erspL7_means];
-ignore_data = [ignore_erspL3_means, ignore_erspL5_means, ignore_erspL7_means];
-
-% Combine memorise and ignore data into one table
+% Create table dynamically for ANOVA
+memorise_data = cell2mat(cellfun(@(x) mean(x), memorise_erspMeans, 'UniformOutput', false));
+ignore_data = cell2mat(cellfun(@(x) mean(x), ignore_erspMeans, 'UniformOutput', false));
 all_data = [memorise_data, ignore_data];
-loadNames = {'Memorise_Load3', 'Memorise_Load5', 'Memorise_Load7', 'Ignore_Load3', 'Ignore_Load5', 'Ignore_Load7'};
-participantID = (1:size(all_data, 1))'; % Create participant IDs
 
-% Create table
+loadNames = [arrayfun(@(x) sprintf('Memorise_Load%d', x), accumulatedLoads, 'UniformOutput', false), ...
+             arrayfun(@(x) sprintf('Ignore_Load%d', x), accumulatedLoads, 'UniformOutput', false)];
+
 dataTable = array2table(all_data, 'VariableNames', loadNames);
-dataTable.ParticipantID = participantID;
+dataTable.ParticipantID = (1:size(all_data, 1))';
 
-% Define within-subject factors
-condition = categorical([repmat({'Memorise'}, 1, 3), repmat({'Ignore'}, 1, 3)])';
-memoryLoad = categorical(repmat({'Load3', 'Load5', 'Load7'}, 1, 2))';
+% Dynamic within-subject factors
+condition = categorical([repmat({'Memorise'}, 1, length(accumulatedLoads)), ...
+                        repmat({'Ignore'}, 1, length(accumulatedLoads))])';
+memoryLoad = categorical(repmat(arrayfun(@(x) sprintf('Load%d', x), accumulatedLoads, 'UniformOutput', false), 1, 2))';
 withinDesign = table(condition, memoryLoad, 'VariableNames', {'Condition', 'MemoryLoad'});
 
-% Fit repeated measures model
-rm = fitrm(dataTable, 'Memorise_Load3-Ignore_Load7~1', 'WithinDesign', withinDesign);
-
-% Run repeated measures ANOVA
+% Fit repeated measures model and run ANOVA
+rm = fitrm(dataTable, sprintf('%s~1', strjoin(loadNames, '-')), 'WithinDesign', withinDesign);
 ranovaResults = ranova(rm);
-
-% Display results
 disp('Repeated Measures ANOVA Results:');
 disp(ranovaResults);
 
-% Post-hoc tests
-% posthoc_results = multcompare(stats, 'CType', 'bonferroni');
-
-%% Step C2: Visualisation
 fprintf('Visualising results...\n');
+fprintf('Visualising results dynamically for all loads...\n');
+memoryLoads = 0:5;
+
+% Mean and standard error already computed in previous step
+
 figure;
-memoryLoads = [3, 5, 7];
-
-% Mean and standard error for memorise condition
-mean_memorise = mean([memorise_erspL3_means, memorise_erspL5_means, memorise_erspL7_means]);
-std_memorise = std([memorise_erspL3_means, memorise_erspL5_means, memorise_erspL7_means]) / sqrt(length(participantIDs));
-
-% Mean and standard error for ignore condition
-mean_ignore = mean([ignore_erspL3_means, ignore_erspL5_means, ignore_erspL7_means]);
-std_ignore = std([ignore_erspL3_means, ignore_erspL5_means, ignore_erspL7_means]) / sqrt(length(participantIDs));
-
-% Plot memorise condition
 errorbar(memoryLoads, mean_memorise, std_memorise, 'o-', 'DisplayName', 'Memorise');
 hold on;
-
-% Plot ignore condition
 errorbar(memoryLoads, mean_ignore, std_ignore, 'o-', 'DisplayName', 'Ignore');
-
 xlabel('Memory Load (Letters)');
-ylabel('Baseline-Normalised alpha Power');
-title('alpha Power Across Memory Loads by Condition');
+ylabel('Baseline-Normalised Alpha Power');
+title('Alpha Power Across Memory Loads by Condition');
 legend;
 saveas(gcf, fullfile(outputFolder, 'alpha_power_memory_loads_conditions.png'));
+
 
 
 %% Utility Functions
