@@ -30,7 +30,7 @@ addpath('utils');
 
 % Analysis Parameters
 thetaBand = [5 7]; % Theta frequency range (5–7 Hz)
-memoryLoads = [3, 5, 7]; % Memory load conditions
+memoryLoads = 0:5; % Accumulated memory loads L0 to L5
 freqs = [2 30];
 rv_threshold = 0.15; % 15% residual variance
 mni_constraints = [-10 10; 10 50; 10 50]; % Midline ACC constraints
@@ -51,9 +51,6 @@ end
 % Preallocate variables for CSVs and ANOVA
 csvData = [];
 participantIDs = {};
-erspL3_means = [];
-erspL5_means = [];
-erspL7_means = [];
 dipole_info = [];
 fm_theta_idx_di = [];
 fm_theta_rv_di = [];
@@ -293,34 +290,26 @@ for i = 1:length(matchedFiles)
 
     %% Step B2: Separate Epochs by Memory Load
     fprintf('Separating epochs by memory load...\n');
-    fprintf('Separating memorise epochs by memory load...\n');
+% Preallocate containers for memory load subsets and theta power means
+accumulatedLoads = 0:5; % Accumulated loads (L0 to L5)
+erspMeans = cell(1, length(accumulatedLoads)); % One cell per load
 
-    % Preallocate containers for memory load subsets
-    memorise_by_load = cell(1, length(memoryLoads)); % memoryLoads = [3, 5, 7]
-    
-    % Loop through epochs to sort by memory load
-    for e = 1:length(EEG_memorise.epoch)
-        % Extract the first event type string
-        load_type_str = EEG_memorise.epoch(e).eventtype{1}; % Get the first cell element
-    
-        % Extract the numeric prefix from the event type string
-        if startsWith(load_type_str, 's')
-            load_type = str2double(load_type_str(2)); % Extract the first digit after 's'
+% Sort memorise epochs using eventAccLoad
+for e = 1:length(EEG_memorise.epoch)
+    if isfield(EEG_memorise.epoch(e), 'eventAccLoad')
+        accLoadStr = EEG_memorise.epoch(e).eventAccLoad{1};
+        loadNum = sscanf(accLoadStr, 'L%d');
+        if ~isempty(loadNum) && loadNum <= 5
+            memorise_by_load{loadNum+1} = [memorise_by_load{loadNum+1}, e];
         else
-            warning('Event type %s does not start with "s". Skipping epoch %d.', load_type_str, e);
-            continue;
+            warning('Unexpected AccLoad format in epoch %d: %s', e, accLoadStr);
         end
-    
-        % Match the extracted load type to memoryLoads
-        load_idx = find(memoryLoads == load_type, 1);
-        if ~isempty(load_idx)
-            memorise_by_load{load_idx} = [memorise_by_load{load_idx}, e];
-        else
-            warning('Unknown memory load type in epoch %d: %s', e, load_type_str);
-        end
+    else
+        warning('Missing eventAccLoad in epoch %d', e);
     end
-    fprintf('Memorise epochs split into memory load conditions.\n');
-    
+end
+fprintf('Memorise epochs split into memory load conditions based on AccLoad.\n');
+
     fprintf('Assigning fixation epochs cyclically by memory load...\n');
     
     % Preallocate containers for fixation load subsets
@@ -362,7 +351,14 @@ for i = 1:length(matchedFiles)
     %-------------
 
     % Aggregate theta power
-    fprintf('Aggregating and baseline-normalising theta power...\n');
+% Aggregate theta power for all loads (L0 to L5)
+for load = 0:length(accumulatedLoads)
+    mean_memorise_power = mean(theta_power_memorise{load+1});
+    mean_fixation_power = mean(theta_power_fixation{load+1});
+    erspMeans{load+1} = mean_memorise_power - mean_fixation_power;
+    fprintf('Load %d: Mean memorise theta power = %.4f, Mean fixation theta power = %.4f, Normalised = %.4f\n', ...
+        load, mean_memorise_power, mean_fixation_power, erspMeans{load+1});
+end
     % Preallocate for mean theta power
     mean_theta_power = zeros(1, length(memoryLoads));
     
@@ -392,10 +388,7 @@ for i = 1:length(matchedFiles)
 
 
     %% Save Participant-Level Data
-    csvData = [csvData; mean_theta_power]; % Append to CSV data
-    erspL3_means = [erspL3_means; mean_theta_power(1)];
-    erspL5_means = [erspL5_means; mean_theta_power(2)];
-    erspL7_means = [erspL7_means; mean_theta_power(3)];
+    csvData = [csvData; mean_theta_power];
 
 disp("Exiting the big loop!")
 end
@@ -427,8 +420,6 @@ fprintf('Final cluster includes %d components from %d participants.\n', ...
 
 %% Export Results to CSV
 % Create a table for CSV export
-csvTable = table(participantIDs', erspL3_means', erspL5_means', erspL7_means', ...
-    'VariableNames', {'ParticipantID', 'ERSP_L3', 'ERSP_L5', 'ERSP_L7'});
 % Save the csv 
 csvFileName = fullfile(outputFolder, 'theta_power_memory_load.csv');
 writetable(csvTable, csvFileName);
@@ -444,7 +435,6 @@ fprintf('Size of posZ: [%d x %d]\n', size(posZ, 1), size(posZ, 2));
 
 % Create the table
 csvTableDipole = table(participantIDs', fm_theta_idx_di', posX, posY, posZ, fm_theta_rv_di', ...
-    'VariableNames', {'ParticipantID', 'fm_theta_idx_di', 'PosX', 'PosY', 'PosZ', 'fm_theta_rv_di'});
 % Save the table as a CSV file
 csvFileName_dt = fullfile(outputFolder, 'dipole_info.csv'); % Define file path
 writetable(csvTableDipole, csvFileName_dt);
@@ -455,16 +445,13 @@ disp(['Dipole information saved as CSV: ' csvFileName_dt]);
 
 %% Step C1: Statistical Analysis
 % Organise data for repeated measures
-data = [erspL3_means, erspL5_means, erspL7_means]; % Combine means for all memory loads
-loadNames = {'Load3', 'Load5', 'Load7'};
+loadNames = {'Load0', 'Load1', 'Load2', 'Load3', 'Load4', 'Load5'};
 participantID = (1:size(data, 1))'; % Create participant IDs
 
 % Create table
-dataTable = array2table(data, 'VariableNames', loadNames);
 dataTable.ParticipantID = participantID;
 
 % Define within-subject factors
-withinDesign = table(loadNames', 'VariableNames', {'MemoryLoad'});
 
 % Fit repeated measures model
 rm = fitrm(dataTable, 'Load3-Load7~1', 'WithinDesign', withinDesign);
@@ -482,8 +469,6 @@ disp(ranovaResults);
 %% Step C2: Visualisation
 fprintf('Visualising results...\n');
 figure;
-errorbar(memoryLoads, mean([erspL3_means, erspL5_means, erspL7_means]), ...
-    std([erspL3_means, erspL5_means, erspL7_means]) / sqrt(length(participantIDs)), 'o-');
 xlabel('Memory Load (Letters)');
 ylabel('Baseline-Normalised Theta Power');
 title('Theta Power Across Memory Loads');
