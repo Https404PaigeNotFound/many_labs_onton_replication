@@ -11,7 +11,7 @@
 %{
 Input: Memorise epochs, ignore epochs, fixation epochs
 Output: Condition (Memorise, Ignore), Memory load (3,5,7) and alpha Power 
-Summary: Identify fmα Component, Validate Near ACC, Compute ERSPs, and Perform ANOVA
+Summary: Identify parietal alpha Component, Validate Near PPC, Compute ERSPs, and Perform ANOVA
 %}
 
 % Set variables
@@ -40,8 +40,8 @@ addpath('utils');
 alphaBand = [8 12]; % Alpha frequency range (8–12 Hz)
 freqs = [2 30];
 rv_threshold = 0.15; % 15% residual variance
-mni_constraints = [-10 10; 10 50; 10 50]; % Midline ACC constraints
-acc_centroid = [-5, 20, 25];
+mni_constraints = [-30 50; -70 -50; 30 50]; % posterior parietal cortex  constraints
+ppc_centroid = [-48, -66, 34];
 
 % Load Preprocessed Memorise and Fixation Epochs
 memoriseFiles = dir(fullfile(memoriseEpochFolder, '*_memorise.set'));
@@ -231,11 +231,11 @@ for i = 1:length(matchedFiles)
    end
 
     % Validate dipoles based on spatial and residual variance criteria
-    [valid_idx, distances] = validate_dipoles(EEG_ignore, rv_threshold, mni_constraints, acc_centroid);
+    [valid_idx, distances] = validate_dipoles(EEG_ignore, rv_threshold, mni_constraints, ppc_centroid);
 
     % Debug output
     fprintf('Valid dipole indices: %s\n', mat2str(find(valid_idx)));
-    fprintf('Distances from ACC centroid: %s\n', mat2str(distances));
+    fprintf('Distances from PPC centroid: %s\n', mat2str(distances));
     
     % Retain spatially valid ICs:
     valid_ICs = find(valid_idx);
@@ -261,7 +261,7 @@ for i = 1:length(matchedFiles)
             fm_alpha_idx, alpha_scores(fm_alpha_idx));
     else
         % No valid dipoles, use closest based on distance
-        fprintf('No valid dipoles found. Using fallback based on distance to ACC centroid.\n');
+        fprintf('No valid dipoles found. Using fallback based on distance to PPC centroid.\n');
     
         % Find top 5 closest dipoles
         [~, sorted_indices] = sort(distances);
@@ -445,17 +445,17 @@ fprintf('Clustering fmα components across participants...\n');
 
 % Loop the dipole_info data?? 
 
-% Perform spatial clustering around the ACC
-fprintf('Performing spatial clustering around ACC...\n');
+% Perform spatial clustering around the PPC
+fprintf('Performing spatial clustering around PPC...\n');
 
 % Define cluster radius
 cluster_radius = 100; % Radius in mm for clustering
 
-% Compute distances from ACC centre
-distances = pdist2(all_dipoles, acc_centroid);
+% Compute distances from PPC centre
+distances = pdist2(all_dipoles, ppc_centroid);
 cluster_idx = distances < cluster_radius; % Identify dipoles within the radius
 
-% Retain components within the ACC cluster
+% Retain components within the PPC cluster
 final_dipoles = all_dipoles(cluster_idx, :);
 final_participants = selected_fm_alpha_idx(cluster_idx);
 
@@ -773,16 +773,16 @@ function alpha_scores = score_alpha_alignment(ica_templates, alpha_template_idx,
 end
 
 
-function [valid_idx, distances] = validate_dipoles(EEG, rv_threshold, mni_constraints, acc_centroid)
-    % Validate dipoles based on residual variance and MNI constraints, and calculate distances from ACC centroid
+function [valid_idx, distances] = validate_dipoles(EEG, rv_threshold, mni_constraints, ppc_centroid)
+    % Validate dipoles based on residual variance and MNI constraints, and calculate distances from PPC centroid
     % Inputs:
     %   EEG - EEG structure with dipfit model
     %   rv_threshold - Residual variance threshold (e.g., 0.15)
     %   mni_constraints - [X_min X_max; Y_min Y_max; Z_min Z_max] matrix defining MNI constraints
-    %   acc_centroid - [x, y, z], ACC centroid coordinates (e.g., [-5, 20, 25])
+    %   ppc_centroid - [x, y, z], PPC centroid coordinates (e.g., [-5, 20, 25])
     % Outputs:
     %   valid_idx - Logical array indicating valid ICs (1 for valid, 0 for invalid)
-    %   distances - Array of distances from ACC centroid for all ICs
+    %   distances - Array of distances from PPC centroid for all ICs
 
     num_ICs = length(EEG.dipfit.model);
     valid_idx = false(1, num_ICs); % Initialise all ICs as invalid
@@ -797,9 +797,9 @@ function [valid_idx, distances] = validate_dipoles(EEG, rv_threshold, mni_constr
             continue;
         end
 
-        % Compute Euclidean distance from ACC centroid
+        % Compute Euclidean distance from PPC centroid
         posxyz = dipole.posxyz;
-        distances(ic) = norm(posxyz - acc_centroid);
+        distances(ic) = norm(posxyz - ppc_centroid);
 
         % Check if the dipole meets residual variance threshold
         if dipole.rv > rv_threshold
@@ -815,7 +815,7 @@ function [valid_idx, distances] = validate_dipoles(EEG, rv_threshold, mni_constr
     end
 
     % Debugging output for distances and valid indices
-    fprintf('Debug: Distances from ACC centroid: %s\n', mat2str(distances));
+    fprintf('Debug: Distances from PPC centroid: %s\n', mat2str(distances));
     fprintf('Debug: Valid indices: %s\n', mat2str(find(valid_idx)));
 
     % Handle mismatched IC and dipole counts
