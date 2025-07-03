@@ -459,9 +459,16 @@ function ERSP_tensor = condition_ERSP_baseline_norm(EEG_fixation, EEG_memorise, 
         activity_data = squeeze(EEG_memorise.icaact(fm_alpha_idx, :, :));
         baseline_data = squeeze(EEG_fixation.icaact(fm_alpha_idx, :, :));
     
-        baseline_flat = baseline_data(:);
-        baseline_mean = mean(abs(baseline_flat).^2);
-    
+        % Compute log baseline spectrum using newtimef on fixation trials
+        [baseline_ersp, ~, ~, ~, ~] = newtimef( ...
+            baseline_data(:,1), EEG_fixation.pnts, ...
+            [EEG_fixation.xmin, EEG_fixation.xmax]*1000, ...
+            EEG_fixation.srate, [3], ...
+            'plotersp', 'off', 'plotitc', 'off', 'baseline', NaN);
+
+        baseline_mean = mean(baseline_ersp, 2);  % Mean across time
+
+
         num_trials = size(activity_data, 2);
     
         [test_ersp, ~, ~, times, freqs] = newtimef( ...

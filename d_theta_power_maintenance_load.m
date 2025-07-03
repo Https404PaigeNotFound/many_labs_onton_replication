@@ -396,9 +396,16 @@ function ERSP_tensor = maintenance_ERSP_baseline_norm(EEG_fixation, EEG_maintena
     % Computes baseline-normalized ERSPs for selected fmθ component
         activity_data = squeeze(EEG_maintenance.icaact(fm_theta_idx, :, :));
         baseline_data = squeeze(EEG_fixation.icaact(fm_theta_idx, :, :));
-        baseline_flat = baseline_data(:);
-        baseline_mean = mean(abs(baseline_flat).^2);
-    
+
+        % Compute log baseline spectrum using newtimef on fixation trials
+        [baseline_ersp, ~, ~, ~, ~] = newtimef( ...
+            baseline_data(:,1), EEG_fixation.pnts, ...
+            [EEG_fixation.xmin, EEG_fixation.xmax]*1000, ...
+            EEG_fixation.srate, [3], ...
+            'plotersp', 'off', 'plotitc', 'off', 'baseline', NaN);
+
+        baseline_mean = mean(baseline_ersp, 2);  % Mean across time
+
         num_trials = size(activity_data, 2);
         [test_ersp, ~, ~, times, freqs] = newtimef( ...
             activity_data(:, 1), EEG_maintenance.pnts, ...
