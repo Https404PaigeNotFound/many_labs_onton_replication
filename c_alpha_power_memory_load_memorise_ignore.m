@@ -103,182 +103,54 @@ for i = 1:length(matchedFiles)
     EEG_fixation = ensureICAActivations(EEG_fixation);
     EEG_ignore = ensureICAActivations(EEG_ignore);
 
-    %% Step A1: Compute ERSPs for Ignore Epochs (Baseline-Normalised); use ignore to find fmα component
-    fprintf('Computing ERSPs for ignore epochs...\n');
-    ERSP_baseline_norm = condition_ERSP_baseline_norm(EEG_fixation, EEG_ignore);
-    fprintf('Baseline normalisation complete.\n');
+    %% Step A1: Identify fmα Components Using Alpha Peak and DIPFIT (on "Ignore")
+    fprintf('Identifying fmα components via PSD and DIPFIT on ignore epochs...\n');
 
-
-    %% Step A2: ERSP Decomposition and Template Matching
-    fprintf('Performing ERSP decomposition...\n');
-
-    % Dimensions of ERSP_baseline_norm: [channels x frequencies x time points]
-    [num_channels, num_frequencies, num_time_points] = size(ERSP_baseline_norm);
-    fprintf('Debug: ERSP dimensions - Channels: %d, Frequencies: %d, Time Points: %d\n', ...
-        num_channels, num_frequencies, num_time_points);
-
-    % Number of ICs
-    num_ICs = size(EEG_ignore.icaact, 1); % [num ICs, timepoint/epoch, num epochs]
-
-    % Reshape ERSP to isolate the time dimension for PCA
-    reshaped_for_time_PCA = reshape(ERSP_baseline_norm, num_frequencies * num_time_points, num_ICs); % [frequencies*time points x ICs]
-    
-    % Debug reshaping
-    fprintf('Debug: Reshaped ERSP for PCA across time - Dimensions: [%d x %d]\n', ...
-        size(reshaped_for_time_PCA, 1), size(reshaped_for_time_PCA, 2));
-    
-    % Perform PCA across time for each frequency
-    fprintf('Performing PCA across time for each frequency...\n');
-    [pca_coeff_time, pca_scores_time, latent_time] = pca(reshaped_for_time_PCA);
-    
-    % Retain only the top components that explain the most variance
-    explained_variance_threshold = 85; % Retain components explaining 85% variance  % TO DO TEST WITH 99
-    cumulative_variance = cumsum(latent_time) / sum(latent_time) * 100;
-    num_retained_time_components = find(cumulative_variance >= explained_variance_threshold, 1);
-    
-    % Ensure at least one component is retained
-    if isempty(num_retained_time_components) || num_retained_time_components == 0
-        num_retained_time_components = size(pca_scores_time, 2); % Retain all components
-    end
-     
-    fprintf('Debug: Numer of num_retained_time_components: %d\n', num_retained_time_components);
-
-    % Adjust to ensure divisibility by num_frequencies
-    num_retained_time_components = max(1, ...
-        floor(num_retained_time_components / num_frequencies) * num_frequencies);
-    fprintf('Debug: Retaining %d components (adjusted for divisibility by %d frequencies).\n', ...
-        num_retained_time_components, num_frequencies);
-
-    fprintf('Debug: Numer of num_retained_time_components after ensuring divisibility by num_frequencies: %d\n', num_retained_time_components);
-    
-    % Truncate PCA scores and coefficients
-    pca_scores_time = pca_scores_time(:, 1:num_retained_time_components);
-    pca_coeff_time = pca_coeff_time(:, 1:num_retained_time_components);
-    
-    % Reshape PCA scores back into [frequencies x components x time points]
-    reshaped_scores_time = reshape(pca_scores_time, num_frequencies, num_retained_time_components, num_time_points);
-    
-    % Combine frequency and time dimensions for ICA
-    fprintf('Combining frequency and time dimensions for ICA...\n');
-    reshaped_for_ICA = reshape(reshaped_scores_time, num_frequencies * num_retained_time_components, num_time_points);
-    
-    fprintf('Debug: Dimensions of PCA-reduced input to ICA - [%d x %d]\n', ...
-        size(reshaped_for_ICA, 1), size(reshaped_for_ICA, 2));
-    
-    % Apply ICA on the reduced PCA dimensions
-    fprintf('Performing ICA on PCA-reduced data...\n');
-    [ica_weights, ica_templates] = runica(reshaped_for_ICA);
-    
-    % Validate ICA output dimensions
-    fprintf('Debug: ICA templates dimensions before reshaping: [%d x %d]\n', size(ica_templates, 1), size(ica_templates, 2));
-    
-    % Automatically adjust for mismatched dimensions
-    expected_elements = num_frequencies * num_retained_time_components * num_time_points;
-    actual_elements = numel(ica_templates);
-    
-    if actual_elements ~= expected_elements
-        warning('Mismatch in elements: Expected %d, but got %d. Reshaping based on actual dimensions.', ...
-            expected_elements, actual_elements);
-        % Dynamically adjust reshaping parameters
-        adjusted_num_time_points = floor(actual_elements / (num_frequencies * num_retained_time_components));
-        fprintf('Debug: Adjusted time points for reshaping: %d\n', adjusted_num_time_points);
-        num_time_points = adjusted_num_time_points; % Adjust time points dynamically
-    end
-    
-    % Reshape ICA templates
-    ica_templates_reshaped = reshape(ica_templates, num_frequencies, num_retained_time_components, num_time_points);
-    
-    % Debug reshaped dimensions
-    fprintf('Debug: ICA templates reshaped to [%d frequencies x %d components x %d time points].\n', ...
-        size(ica_templates_reshaped, 1), size(ica_templates_reshaped, 2), size(ica_templates_reshaped, 3));
-
-    % Scoring alpha Components
-    alpha_scores = zeros(1, size(ica_templates_reshaped, 3));
-    freq_vector = linspace(freqs(1), freqs(2), num_frequencies);
-    
-    for ic = 1:size(ica_templates_reshaped, 3)
-        % Extract ICA template from reshaped data
-        ic_template = ica_templates_reshaped(:, :, ic); % [frequencies x time_points]
-    
-        % Identify alpha band indices
-        alpha_indices = find(freq_vector >= alphaBand(1) & freq_vector <= alphaBand(2));
-    
-        % Compute alpha power
-        alpha_power = mean(ic_template(alpha_indices, :), 1); % Mean across time
-        alpha_scores(ic) = mean(alpha_power); % Average over time
-    
-        % Debug alpha computation
-        fprintf('Debug: alpha indices: %s\n', mat2str(alpha_indices));
-        fprintf('Debug: alpha power for IC %d: %.4f\n', ic, alpha_scores(ic));
-    end
-    
-    % Identify dominant alpha template
-    [~, alpha_template_idx] = max(alpha_scores);
-    fprintf('Selected alpha Template Index: %d\n', alpha_template_idx);
-    
-    % Spatial Validation           
-    fprintf('Performing spatial validation with DIPFIT...\n');
+    EEG_ignore = ensureICAActivations(EEG_ignore);
     EEG_ignore = performDipfit(EEG_ignore);
 
-    fprintf('Validating IC-to-dipole mapping...\n');
-    num_ICs = size(ica_weights, 1);
-    num_dipoles = length(EEG_ignore.dipfit.model);
-    
-   if num_ICs ~= num_dipoles
-        warning('Mismatch: Number of ICs (%d) does not match number of dipoles (%d). Adjusting to the smaller count.', ...
-            num_ICs, num_dipoles);
-        num_dipoles = min(num_ICs, num_dipoles);
-   end
+    num_ICs = size(EEG_ignore.icaact, 1);
+    alpha_scores = zeros(1, num_ICs);
 
-    % Validate dipoles based on spatial and residual variance criteria
+    for ic = 1:num_ICs
+        data_ic = squeeze(EEG_ignore.icaact(ic, :, :));
+        data_ic = data_ic(:);
+        [pxx, f] = pwelch(data_ic, [], [], [], EEG_ignore.srate);
+        alpha_band = f >= alphaBand(1) & f <= alphaBand(2);
+        alpha_scores(ic) = mean(pxx(alpha_band));
+    end
+
     [valid_idx, distances] = validate_dipoles(EEG_ignore, rv_threshold, mni_constraints, ppc_centroid);
+    fm_alpha_candidates = find(valid_idx);
 
-    % Debug output
-    fprintf('Valid dipole indices: %s\n', mat2str(find(valid_idx)));
-    fprintf('Distances from PPC centroid: %s\n', mat2str(distances));
-    
-    % Retain spatially valid ICs:
-    valid_ICs = find(valid_idx);
-
-    % Adjust valid_idx length to match alpha_scores
-    if length(valid_idx) ~= length(alpha_scores)
-        warning('Adjusting valid_idx length to match alpha_scores...');
-        valid_idx = valid_idx(1:min(length(valid_idx), length(alpha_scores))); % Trim to match alpha_scores
-    end
-    fprintf('Debug: Adjusted valid indices: %s\n', mat2str(find(valid_idx)));
-
-    
-    % Check if any dipoles are valid
-    if any(valid_idx)
-        % Retain alpha scores for spatially valid components
-        valid_alpha_scores = alpha_scores(valid_idx);
-        valid_indices = find(valid_idx);
-    
-        % Select the dipole with the maximum absoulte alpha score
-        [~, max_valid_idx] = max(abs(valid_alpha_scores));
-        fm_alpha_idx = valid_indices(max_valid_idx);
-        fprintf('Selected valid dipole (Index: %d) with max alpha score: %.4f.\n', ...
-            fm_alpha_idx, alpha_scores(fm_alpha_idx));
+    if isempty(fm_alpha_candidates)
+        [~, fallback_idx] = min(distances);
+        fm_alpha_idx = fallback_idx;
+        fprintf('No valid PPC dipoles. Using fallback IC %d.\n', fm_alpha_idx);
     else
-        % No valid dipoles, use closest based on distance
-        fprintf('No valid dipoles found. Using fallback based on distance to PPC centroid.\n');
-    
-        % Find top 5 closest dipoles
-        [~, sorted_indices] = sort(distances);
-        top_5_closest = sorted_indices(1:min(5, length(sorted_indices)));
-    
-        % Retrieve alpha scores for the closest dipoles
-        closest_alpha_scores = alpha_scores(top_5_closest);
-    
-        % Select the dipole with the maximum absoulte alpha score among the closest
-        [~, max_closest_idx] = max(abs(closest_alpha_scores));
-        fm_alpha_idx = top_5_closest(max_closest_idx);
-        fprintf('Selected fallback dipole (Index: %d) with max alpha score: %.4f (Distance: %.2f mm).\n', ...
-            fm_alpha_idx, alpha_scores(fm_alpha_idx), distances(fm_alpha_idx));
+        [~, best_idx] = max(alpha_scores(fm_alpha_candidates));
+        fm_alpha_idx = fm_alpha_candidates(best_idx);
+        fprintf('Selected fmα IC: %d\n', fm_alpha_idx);
     end
-    
-    % Final selected dipole index
-    fprintf('Final selected dipole index: %d\n', fm_alpha_idx);
+
+    %% Step A2: Compute ERSPs for fmα (on "memorise" data) and Apply PCA + ICA
+    fprintf('Computing ERSPs for fmα component in memorise epochs...\n');
+
+    ERSP_tensor = condition_ERSP_baseline_norm(EEG_fixation, EEG_memorise, fm_alpha_idx);
+
+    [num_freqs, num_times, num_trials] = size(ERSP_tensor);
+    ERSP_matrix = reshape(permute(ERSP_tensor, [3, 1, 2]), num_trials, []);
+
+    [~, pca_scores, latent] = pca(ERSP_matrix);
+    explained = cumsum(latent) / sum(latent) * 100;
+    num_components = find(explained >= 85, 1);
+    pca_scores_reduced = pca_scores(:, 1:num_components)';
+
+    [weights, sphere] = runica(pca_scores_reduced, 'extended', 1, 'stop', 1e-7);
+    ica_templates = pinv(weights * sphere)';
+    templates_reshaped = reshape(ica_templates, num_components, num_freqs, num_times);
+
+    fprintf('Extracted %d ICA templates.\n', num_components);
 
 
     %% Step A3: Cluster Components Across Participants
@@ -439,31 +311,6 @@ end
 
 end
 
-%{
-%% Step A3: Cluster Components Across Participants
-fprintf('Clustering fmα components across participants...\n');
-
-% Loop the dipole_info data?? 
-
-% Perform spatial clustering around the PPC
-fprintf('Performing spatial clustering around PPC...\n');
-
-% Define cluster radius
-cluster_radius = 100; % Radius in mm for clustering
-
-% Compute distances from PPC centre
-distances = pdist2(all_dipoles, ppc_centroid);
-cluster_idx = distances < cluster_radius; % Identify dipoles within the radius
-
-% Retain components within the PPC cluster
-final_dipoles = all_dipoles(cluster_idx, :);
-final_participants = selected_fm_alpha_idx(cluster_idx);
-
-% Save or visualise the final fmα cluster
-fprintf('Final cluster includes %d components from %d participants.\n', ...
-    size(final_dipoles, 1), length(final_participants));
-%}
-
 %% Export Results to CSV
 % Create a table for CSV export
 csvTable = table(participantIDs');
@@ -606,75 +453,39 @@ end
 
 
 
-function ERSP_baseline_norm = condition_ERSP_baseline_norm(EEG_fixation, EEG_memorise)
-%{
-This function computes the Event-Related Spectral Perturbation (ERSP) 
-for all ICs in the "memorise" EEG dataset (EEG_memorise) and 
-normalises it using the baseline power derived from the "fixation" 
-EEG dataset (EEG_fixation). It uses the newtimef function to perform 
-time-frequency decomposition on each IC, averages the ERSP across 
-epochs, and outputs the normalized ERSP for all ICs as a 
-3D array (ICs × frequencies × time points).
-%}
-    % Extract data
-    activity_data = EEG_memorise.icaact; % IC x Time x Epochs
-    baseline_data = EEG_fixation.icaact; % IC x Time x Epochs
+function ERSP_tensor = condition_ERSP_baseline_norm(EEG_fixation, EEG_memorise, fm_alpha_idx)
+    % Compute ERSPs for selected fmα component across trials
     
-    % Convert baseline to 2D (collapse across epochs)
-    baseline_data_2d = reshape(baseline_data, size(baseline_data, 1), []); % ICs x (Time*Epochs)
-
-    % Compute mean power across baseline epochs for normalisation
-    baseline_mean = mean(abs(baseline_data_2d).^2, 2); % ICs x Frequencies
+        activity_data = squeeze(EEG_memorise.icaact(fm_alpha_idx, :, :));
+        baseline_data = squeeze(EEG_fixation.icaact(fm_alpha_idx, :, :));
     
+        baseline_flat = baseline_data(:);
+        baseline_mean = mean(abs(baseline_flat).^2);
     
-    % Use newtimef once on the first IC to get output dimensions
-    [test_ersp, ~, ~, times, freqs] = newtimef( ...
-        squeeze(activity_data(1, :, :)), ...
-        EEG_memorise.pnts, ...
-        [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, ...
-        EEG_memorise.srate, ...
-        [3], ... #cycles
-        'padratio', 2, ...        % Zero-padding to improve frequency resolution
-        'winsize', 512, ...       % Fixed window length
-        'baseline', baseline_mean(1), ... % Baseline normalisation
-        'plotersp', 'off', ...
-        'plotitc', 'off' ...
-    );
+        num_trials = size(activity_data, 2);
     
-    % Get actual output dimensions from newtimef
-    num_freqs = size(test_ersp, 1);
-    num_times = size(test_ersp, 2);
-
-    % Number of ICs
-    num_ICs = size(activity_data, 1); % Rows correspond to ICs
+        [test_ersp, ~, ~, times, freqs] = newtimef( ...
+            activity_data(:, 1), EEG_memorise.pnts, ...
+            [EEG_memorise.xmin, EEG_memorise.xmax]*1000, ...
+            EEG_memorise.srate, [3], ...
+            'baseline', baseline_mean, ...
+            'plotersp', 'off', 'plotitc', 'off');
     
-    % Preallocate output array
-    ersp_all_ICs = zeros(num_ICs, num_freqs, num_times);
-
-
-    % Process all ICs
-    for ic = 1:num_ICs
-        % Run newtimef for each IC
-        [ersp, ~, ~, ~, ~] = newtimef( ...
-            squeeze(activity_data(ic, :, :)), ...
-            EEG_memorise.pnts, ...
-            [EEG_memorise.xmin, EEG_memorise.xmax] * 1000, ...
-            EEG_memorise.srate, ...
-            [3], ... #cycles
-            'padratio', 2, ...        % Zero-padding to improve frequency resolution
-            'winsize', 512, ...       % Fixed window length
-            'baseline', baseline_mean(ic), ... % Baseline normalisation
-            'plotersp', 'off', ...
-            'plotitc', 'off' ...
-        );
-
-        % Store ERSP for current IC
-        ersp_all_ICs(ic, :, :) = mean(ersp, 3); % Average across epochs
+        num_freqs = size(test_ersp, 1);
+        num_times = size(test_ersp, 2);
+        ERSP_tensor = zeros(num_freqs, num_times, num_trials);
+    
+        for trial = 1:num_trials
+            [ersp, ~, ~, ~, ~] = newtimef( ...
+                activity_data(:, trial), EEG_memorise.pnts, ...
+                [EEG_memorise.xmin, EEG_memorise.xmax]*1000, ...
+                EEG_memorise.srate, [3], ...
+                'baseline', baseline_mean, ...
+                'plotersp', 'off', 'plotitc', 'off');
+            ERSP_tensor(:, :, trial) = ersp;
+        end
     end
-
-    % Return baseline-normalised ERSP
-    ERSP_baseline_norm = ersp_all_ICs;
-end
+    
 
 
 function alpha_template_idx = find_alpha_template(ica_templates, freqs, alphaBand, visualise)
